@@ -1,0 +1,19 @@
+[Unit]
+Description=Bot-binance Main Service
+After=network.target
+
+[Service]
+Type=simple
+User=botbinance
+Group=botbinance
+Restart=on-failure
+WorkingDirectory=/home/botbinance/app
+ExecStart=/usr/bin/php start.php
+TasksMax=30
+CPUAccounting=true
+CPUQuota=10%
+MemoryAccounting=true
+MemoryLimit=400M
+
+[Install]
+WantedBy=multi-user.target
