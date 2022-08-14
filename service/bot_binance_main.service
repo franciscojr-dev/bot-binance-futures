@@ -9,11 +9,11 @@ Group=botbinance
 Restart=on-failure
 WorkingDirectory=/home/botbinance/app
 ExecStart=/usr/bin/php start.php
-TasksMax=30
+TasksMax=40
 CPUAccounting=true
-CPUQuota=10%
+CPUQuota=25%
 MemoryAccounting=true
-MemoryLimit=400M
+MemoryMax=400M
 
 [Install]
 WantedBy=multi-user.target

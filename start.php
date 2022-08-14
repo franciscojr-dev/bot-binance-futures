@@ -17,7 +17,7 @@ $loop->addPeriodicTimer(10, function () use (&$started) {
     $now = new DateTime('now');
     $diff = $now->format('U') - $last_execution->format('U');
 
-    if (!$started || $diff >= 140) {
+    if (!$started/* || $diff >= 300*/) {
         if (!$started) {
             $started = true;
             echo "Starting...\n";

@@ -85,10 +85,13 @@ foreach ($symbols as $symbol) {
             $monitor->init();
         } else {
             printf(
-                $monitor->textColor('blue', "[%s] - Waiting funding %s...\n"),
+                "[%s] - %s %s...\n",
                 date('Y-m-d H:i:s'),
+                $monitor->textColor('blue', "Waiting funding"),
                 $monitor->textColor('yellow', $configs['operation']['symbol'])
             );
+
+            sleep(10);
         }
 
         $db->close();
