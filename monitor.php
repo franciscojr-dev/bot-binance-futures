@@ -69,7 +69,6 @@ foreach ($symbols as $symbol) {
             'max_orders' => $configs['operation']['max_orders'],
             'timeout_order' => $configs['operation']['timeout_order'],
         ]), $request, $db);
-        $monitor->setOperations(true);
         $monitor->setDebug(true);
 
         $db->exec(sprintf("UPDATE monitor SET execution = '%s'", date('Y-m-d H:i:s')));

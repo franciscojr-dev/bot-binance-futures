@@ -12,10 +12,10 @@ final class Monitor
     private $configs = null;
     private $request = null;
     private $db = null;
-    private $operations = false;
     private $position = [];
     private $debug = false;
     private $walletBalance = 0.00;
+    private $operations = false;
     private $marginAccount = 0;
     private $marginSymbol = 0;
     private $pnlHour = 0;
@@ -23,6 +23,7 @@ final class Monitor
     private $maxTry = 0;
     private $multipleOrder = 0;
     private $closeLossPosition = false;
+    private $hedgeMode = false;
     private $marginIndividualMin = 0;
     private $marginIndividualMax = 0;
     private $pnlPositionPercentGain = 0;
@@ -52,6 +53,7 @@ final class Monitor
             return;
         }
 
+        $this->operations = (bool) ($config['monitor']['operations'] ?? false);
         $this->marginAccount = $config['monitor']['margin_account'] ?? 0;
         $this->marginSymbol = $config['monitor']['margin_symbol'] ?? 0;
         $this->pnlHour = $config['monitor']['pnl_hour'] ?? 0;
@@ -59,6 +61,7 @@ final class Monitor
         $this->maxTry = $config['monitor']['max_try'] ?? 0;
         $this->multipleOrder = $config['monitor']['multiple_order'] ?? 0;
         $this->closeLossPosition = (bool) ($config['monitor']['close_loss_position'] ?? false);
+        $this->hedgeMode = (bool) ($config['monitor']['hedge_mode'] ?? false);
         $this->marginIndividualMin = $config['monitor']['margin_individual_min'] ?? 0;
         $this->marginIndividualMax = $config['monitor']['margin_individual_max'] ?? 0;
         $this->pnlPositionPercentGain = $config['monitor']['pnl_position_percent_gain'] ?? 0;
@@ -157,12 +160,13 @@ final class Monitor
         }
 
         $this->orderAnalyser();
+        $infoPrices = $this->infoPrice(false, 3);
 
-        if ($this->availableOrders($this->position)) {
-            $infoPrices = $this->infoPrice();
-
-            if (!empty($infoPrices)) {
-                $this->operation($infoPrices['scene'], $infoPrices['prices']);
+        foreach ($this->position as $position) {
+            if ($this->availableOrders($position)) {
+                if (!empty($infoPrices)) {
+                    $this->operation($infoPrices['scene'], $infoPrices['prices']);
+                }
             }
         }
     }
@@ -216,9 +220,7 @@ final class Monitor
             return [];
         }
 
-        $this->position = $response['response'][0];
-
-        return $this->position;
+        return $this->position = $response['response'];
     }
 
     private function infoPrice(bool $btc = false, int $limit = 5): array
@@ -286,9 +288,9 @@ final class Monitor
         }
 
         foreach($response['response'] as $order) {
-            $type = Position::typeOrder($this->position['positionAmt']);
+            $type = Position::typeOrder($this->position['positionAmt'] ?? 0);
 
-            if (!$type || strnatcasecmp($order['side'], $type) === 0) {
+            if (!$order['reduceOnly'] && (!$type || strnatcasecmp($order['side'], $type) === 0)) {
                 if ($order['status'] != 'NEW') {
                     continue;
                 }
@@ -548,15 +550,20 @@ final class Monitor
 
         $orders = $responseOrders['response'];
         $contracts = 0;
+        $ordersTotal = 0;
 
         if (!empty($orders)) {
-            /*
             foreach ($orders as $order) {
                 if (strnatcasecmp($order['side'], $side) === 0) {
                     $contracts += $order['origQty'];
                 }
+
+                if (!$order['reduceOnly']) {
+                    $ordersTotal++;
+                }
             }
 
+            /*
             if ($contracts >= $this->configs->getMaxContracts()) {
                 if ($this->debug) {
                     echo $this->textColor('blue', "Maximum position\n");
@@ -566,7 +573,7 @@ final class Monitor
             }
             */
 
-            if (count($orders) >= $this->configs->getMaxOrders()) {
+            if ($ordersTotal >= $this->configs->getMaxOrders()) {
                 if ($this->debug) {
                     echo $this->textColor('blue', "Maximum open orders\n");
                 }
@@ -584,16 +591,16 @@ final class Monitor
             $orders = $this->getOrders()['response'];
 
             if ($position = $this->position()) {
-                $type = Position::typeOrder($position['positionAmt'] ?? '');
+                $type = Position::typeOrder($position['positionAmt'] ?? 0);
                 $breakOrder = false;
 
                 foreach ($orders as $order) {
-                    if ($type != strtolower($order['side']) && $order['status'] != 'NEW') {
+                    if (!$this->hedgeMode && $type != strtolower($order['side']) && $order['status'] != 'NEW') {
                         $breakOrder = true;
                         break;
                     }
 
-                    if (!$this->isTimeBoxOrder((int) $order['time'], true)) {
+                    if ($order['reduceOnly'] && !$this->isTimeBoxOrder((int) $order['time'], true)) {
                         return;
                     }
 
@@ -605,8 +612,8 @@ final class Monitor
                 }
 
                 if (!$breakOrder) {
-                    if ($type) {
-                        $this->order($params);
+                    if ($this->hedgeMode || $type) {
+                        $this->order($params, true);
                     }
 
                     if ($this->debug) {
@@ -643,7 +650,7 @@ final class Monitor
             $this->request->get('/continuousKlines', [
                 'pair' => !$btc ? $this->configs->getSymbol() : 'BTCUSDT',
                 'contractType' => 'PERPETUAL',
-                'interval' => '15m',
+                'interval' => '5m',
                 'limit' => $limit
             ])
         );
@@ -899,7 +906,7 @@ final class Monitor
 
     private function operation(array $operation, array $prices): void
     {
-        if ($this->configs->getSide() !== '.') {
+        if (!$this->hedgeMode && $this->configs->getSide() !== '.') {
             if (strnatcasecmp($this->configs->getSide(), $operation['type']) !== 0) {
                 return;
             }
@@ -909,8 +916,8 @@ final class Monitor
             return;
         }
 
-        if (!empty($this->position)) {
-            $type = Position::typeOrder($this->position['positionAmt']);
+        if (!$this->hedgeMode && !empty($this->position)) {
+            $type = Position::typeOrder($this->position['positionAmt'] ?? 0);
 
             if ($type && $operation['type'] != $type) {
                 $operation['enable'] = false;
@@ -1050,7 +1057,7 @@ final class Monitor
                 $params['newClientOrderId'] = sprintf('profit-order-%s', $orderCreate['response']['orderId']);
 
                 do {
-                    $orderProfit = $this->order($params);
+                    $orderProfit = $this->order($params, true);
                     $try++;
                     sleep(1);
 
@@ -1101,12 +1108,13 @@ final class Monitor
         ];
     }
 
-    private function order(array $params): array
+    private function order(array $params, bool $closed = false): array
     {
         $params_request = [
             'symbol' => $this->configs->getSymbol(),
             'side' => strtoupper($params['type']),
             'quantity' => $params['quantity'],
+            'positionSide' => 'BOTH',
             'type' => 'LIMIT',
         ];
 
@@ -1115,6 +1123,16 @@ final class Monitor
         } else {
             $params_request['price'] = $params['price'];
             $params_request['timeInForce'] = 'GTC';
+        }
+
+        if ($this->hedgeMode) {
+            $checkSide = $params_request['side'] == 'SELL';
+
+            if ($closed) {
+                $checkSide = $params_request['side'] == 'BUY';
+            }
+
+            $params_request['positionSide'] = $checkSide ? 'SHORT' : 'LONG';
         }
 
         $try = 1;
