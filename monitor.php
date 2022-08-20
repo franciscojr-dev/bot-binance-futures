@@ -16,7 +16,7 @@ require __DIR__ . '/vendor/autoload.php';
 $options = getopt('s::', ['symbol::']);
 $runSymbol = $options['symbol'] ?? '';
 $runDelay = $options['delay'] ?? 1;
-$symbols = glob(__DIR__ . "/configs/*{$runSymbol}.ini");
+$symbols = glob(__DIR__ . "/configs/monitor_*{$runSymbol}.ini");
 $delayLoop = 0;
 $delayIncrement = 1;
 $increment = 0;
@@ -40,10 +40,12 @@ if (empty($runSymbol)) {
     exit(0);
 }
 
+$authInfo = parse_ini_file(__DIR__ . '/configs/auth.ini', true, INI_SCANNER_RAW);
+
 $request = new Request(new ConfigRequest([
-    'public_key' => 'nyCC0Fgu3B9rVNSCIfcRtbfb4pVJaJlQX8l7Zv5I24FADuXihUhmfQSQ3yfkIQEb',
-    'private_key' => 'SsPNLZGZz6xpDIJ5WBu1SclZz4dHvexLfE2S0kBloi5UokewHULi7Ll5o3odJhiW',
-    'mode' => 'main'
+    'public_key' => $authInfo['info']['public_key'],
+    'private_key' => $authInfo['info']['private_key'],
+    'mode' => $authInfo['info']['mode'],
 ]));
 $loop = Loop::get();
 
