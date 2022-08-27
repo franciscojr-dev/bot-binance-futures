@@ -24,10 +24,13 @@ final class Monitor
     private $multipleOrder = 0;
     private $closeLossPosition = false;
     private $hedgeMode = false;
+    private $candleTime = '15m';
+    private $candleLimit = 5;
     private $marginIndividualMin = 0;
     private $marginIndividualMax = 0;
     private $pnlPositionPercentGain = 0;
     private $pnlPositionPercentLoss = 0;
+    private $operationDisable = false;
 
     public function __construct(
         Configurations $configs,
@@ -53,7 +56,7 @@ final class Monitor
             return;
         }
 
-        $this->operations = (bool) ($config['monitor']['operations'] ?? false);
+        $this->operationDisable = (bool) !($config['monitor']['operations'] ?? true);
         $this->marginAccount = $config['monitor']['margin_account'] ?? 0;
         $this->marginSymbol = $config['monitor']['margin_symbol'] ?? 0;
         $this->pnlHour = $config['monitor']['pnl_hour'] ?? 0;
@@ -62,6 +65,8 @@ final class Monitor
         $this->multipleOrder = $config['monitor']['multiple_order'] ?? 0;
         $this->closeLossPosition = (bool) ($config['monitor']['close_loss_position'] ?? false);
         $this->hedgeMode = (bool) ($config['monitor']['hedge_mode'] ?? false);
+        $this->candleTime = $config['monitor']['candle_time'] ?? '15m';
+        $this->candleLimit = $config['monitor']['candle_limit'] ?? 5;
         $this->marginIndividualMin = $config['monitor']['margin_individual_min'] ?? 0;
         $this->marginIndividualMax = $config['monitor']['margin_individual_max'] ?? 0;
         $this->pnlPositionPercentGain = $config['monitor']['pnl_position_percent_gain'] ?? 0;
@@ -144,7 +149,7 @@ final class Monitor
                 echo $this->textColor('red', "Maximum margin used [Account]\n");
             }
 
-            $this->setOperations(false);
+            $this->operationDisable = true;
         }
 
         if (abs($pnlHour) >= $this->pnlHour) {
@@ -152,7 +157,7 @@ final class Monitor
                 echo $this->textColor('red', "maximum pnl per hour {$pnlHour} USDT\n");
             }
 
-            $this->setOperations(false);
+            $this->operationDisable = true;
         }
 
         if (!$this->position()) {
@@ -160,11 +165,11 @@ final class Monitor
         }
 
         $this->orderAnalyser();
-        $infoPrices = $this->infoPrice(false, 3);
+        $infoPrices = $this->infoPrice(false, $this->candleLimit);
 
         foreach ($this->position as $position) {
-            if ($this->availableOrders($position)) {
-                if (!empty($infoPrices)) {
+            if (!empty($infoPrices)) {
+                if ($this->availableOrders($position, $infoPrices['scene'])) {
                     $this->operation($infoPrices['scene'], $infoPrices['prices']);
                 }
             }
@@ -223,7 +228,7 @@ final class Monitor
         return $this->position = $response['response'];
     }
 
-    private function infoPrice(bool $btc = false, int $limit = 5): array
+    private function infoPrice(bool $btc = false, int $limit = 3): array
     {
         $candles = $this->getCandles($btc, $limit)['response'] ?? [];
 
@@ -300,7 +305,7 @@ final class Monitor
                         printf($this->textColor('blue', "%s Order canceled\n"), $order['orderId']);
                     }
 
-                    $this->cancelOrder($order['orderId']);
+                    $this->cancelOrder($order['orderId'] ?? '');
                 }
             }
         }
@@ -377,7 +382,7 @@ final class Monitor
         return (float) bcsub((string) $value1, $value, 4);
     }
 
-    private function availableOrders(array $position): bool
+    private function availableOrders(array $position, array $operation): bool
     {
         if (empty($position)) {
             return false;
@@ -387,9 +392,10 @@ final class Monitor
         $entryPrice = (float) $position['entryPrice'];
         $markPrice = (float) $position['markPrice'];
         $unRealizedProfit = (float) $position['unRealizedProfit'];
-        $notional = (float) $position['notional'];
+        $notional = abs((float) $position['notional']);
         $leverage = (int) $position['leverage'];
         $symbol = $position['symbol'];
+        $positionSide = $position['positionSide'];
         $margin = $notional / $leverage;
         $diffPriceGain = $this->calcPercentage($entryPrice, ($this->pnlPositionPercentGain / $leverage));
         $diffPriceLoss = $this->calcPercentage($entryPrice, ($this->pnlPositionPercentLoss / $leverage));
@@ -397,8 +403,17 @@ final class Monitor
         $pnlPositionPercentLoss = $this->calcPercentage($margin, $this->pnlPositionPercentLoss);
         $marginIndividual = $this->marginIndividualMin;
         $responseBook = $this->getBook();
+        $operationSide = '';
+
+        if ($operation['type']) {
+            $operationSide = $operation['type'] == 'buy' ? 'LONG' : 'SHORT';
+        }
 
         if (($responseBook['status'] ?? 0) !== 200) {
+            return false;
+        }
+
+        if ($this->hedgeMode && $positionSide == 'BOTH') {
             return false;
         }
 
@@ -412,9 +427,15 @@ final class Monitor
             }
         }
 
-        if ($this->operations && $margin >= $marginIndividual) {
+        if ($margin >= $marginIndividual) {
             $this->setOperations(false);
-            echo $this->textColor('red', "Maximum margin used [{$symbol}]\n");
+            echo $this->textColor('red', "Maximum margin used {$positionSide} [{$symbol}]\n");
+        } else {
+            if ($operationSide == $positionSide) {
+                $this->setOperations(
+                    $margin < $marginIndividual
+                );
+            }
         }
 
         $book = $responseBook['response'];
@@ -428,22 +449,22 @@ final class Monitor
         */
 
         if ($side == 'Sell') {
-            $priceLoss = (float) bcadd((string) $entryPrice, (string) $diffPriceLoss, 4);
-            $priceGain = (float) bcsub((string) $entryPrice, (string) $diffPriceGain, 4);
+            $priceLoss = (float) bcadd((string) $entryPrice, (string) $diffPriceLoss, 8);
+            $priceGain = (float) bcsub((string) $entryPrice, (string) $diffPriceGain, 8);
             $position['positionAmt'] *= -1;
             $msg = '';
             $priceClose = 0;
             $result = '';
 
-            if ($markPrice < $priceGain) {
-                $msg = "Maximum %s [%.4f] - (%.4f < %.4f) | %.4f USDT [%s]\n";
+            if ($markPrice < $priceGain && $unRealizedProfit > 0) {
+                $msg = "Maximum %s [%.4f] - (%.4f < %.4f) | %.4f USDT - %s [%s]\n";
                 $result = $this->textColor('green', 'gain');
                 $priceClose = $priceGain;
                 // $force = true;
             }
 
-            if ($this->closeLossPosition && $markPrice > $priceLoss) {
-                $msg = "Maximum %s [%.4f] - (%.4f > %.4f) | %.4f USDT [%s]\n";
+            if ($this->closeLossPosition && $markPrice > $priceLoss && $unRealizedProfit < 0) {
+                $msg = "Maximum %s [%.4f] - (%.4f > %.4f) | %.4f USDT - %s [%s]\n";
                 $result = $this->textColor('red', 'loss');
                 $priceClose = $priceLoss;
                 $force = true;
@@ -458,6 +479,7 @@ final class Monitor
                         $markPrice,
                         $priceClose,
                         $unRealizedProfit,
+                        $positionSide,
                         $symbol
                     );
                 }
@@ -475,21 +497,21 @@ final class Monitor
         }
 
         if ($side == 'Buy') {
-            $priceLoss = (float) bcsub((string) $entryPrice, (string) $diffPriceLoss, 4);
-            $priceGain = (float) bcadd((string) $entryPrice, (string) $diffPriceGain, 4);
+            $priceLoss = (float) bcsub((string) $entryPrice, (string) $diffPriceLoss, 8);
+            $priceGain = (float) bcadd((string) $entryPrice, (string) $diffPriceGain, 8);
             $msg = '';
             $result = '';
             $priceClose = 0;
 
-            if ($markPrice > $priceGain) {
-                $msg = "Maximum %s [%.4f] - (%.4f > %.4f) | %.4f USDT [%s]\n";
+            if ($markPrice > $priceGain && $unRealizedProfit > 0) {
+                $msg = "Maximum %s [%.4f] - (%.4f > %.4f) | %.4f USDT - %s [%s]\n";
                 $result = $this->textColor('green', 'gain');
                 $priceClose = $priceGain;
                 // $force = true;
             }
 
-            if ($this->closeLossPosition && $markPrice < $priceLoss) {
-                $msg = "Maximum %s [%.4f] - (%.4f < %.4f) | %.4f USDT [%s]\n";
+            if ($this->closeLossPosition && $markPrice < $priceLoss && $unRealizedProfit < 0) {
+                $msg = "Maximum %s [%.4f] - (%.4f < %.4f) | %.4f USDT - %s [%s]\n";
                 $result = $this->textColor('red', 'loss');
                 $priceClose = $priceLoss;
                 $force = true;
@@ -504,6 +526,7 @@ final class Monitor
                         $markPrice,
                         $priceClose,
                         $unRealizedProfit,
+                        $positionSide,
                         $symbol
                     );
                 }
@@ -530,13 +553,13 @@ final class Monitor
         }
         */
 
-        if (!$this->closeLossPosition && $side && $this->operations && (
+        if (!$this->hedgeMode && !$this->closeLossPosition && $side && $this->operations && (
             ($unRealizedProfit <= ($pnlPositionPercentLoss * -1) && $unRealizedProfit >= ($pnlPositionPercentLoss * -1) * 3)
              || $unRealizedProfit <= ($pnlPositionPercentLoss * -1) * 6
             )
         ) {
             if ($this->isPrintMessage()) {
-                echo $this->textColor('red', "Loss limit on the position [{$symbol}]\n");
+                echo $this->textColor('red', "Loss limit on the position {$positionSide} [{$symbol}]\n");
             }
 
             return false;
@@ -575,7 +598,7 @@ final class Monitor
 
             if ($ordersTotal >= $this->configs->getMaxOrders()) {
                 if ($this->debug) {
-                    echo $this->textColor('blue', "Maximum open orders\n");
+                    echo $this->textColor('blue', "Maximum open orders [{$symbol}]\n");
                 }
 
                 return false;
@@ -604,7 +627,7 @@ final class Monitor
                         return;
                     }
 
-                    $result = $this->cancelOrder($order['orderId']);
+                    $result = $this->cancelOrder($order['orderId'] ?? '');
 
                     if (($result['order_cancel']['status'] ?? 0) !== 200) {
                         $breakOrder = true;
@@ -644,13 +667,13 @@ final class Monitor
         );
     }
 
-    private function getCandles(bool $btc = false, int $limit = 5): array
+    private function getCandles(bool $btc = false, int $limit = 3): array
     {
         $return = $this->waitRateLimit(
             $this->request->get('/continuousKlines', [
                 'pair' => !$btc ? $this->configs->getSymbol() : 'BTCUSDT',
                 'contractType' => 'PERPETUAL',
-                'interval' => '5m',
+                'interval' => $this->candleTime,
                 'limit' => $limit
             ])
         );
@@ -743,7 +766,7 @@ final class Monitor
             'high' => $high,
             'low' => $low,
             'now' => $now,
-            'close' => $candle['close'],
+            'close' => $candles[$key]['close'],
             'last' => $analyser_last
         ], $btc);
     }
@@ -765,21 +788,23 @@ final class Monitor
             $type_order = 'sell';
         }
 
-        $statics = $this->getStaticsTicker();
+        if (!$this->hedgeMode) {
+            $statics = $this->getStaticsTicker();
 
-        if (($statics['status'] ?? 0) !== 200) {
-            $open_order = false;
-        }
-
-        if ($open_order && !$btc) {
-            $lastPrice = $statics['response']['lastPrice'];
-
-            if ($type_order == 'buy' && $lastPrice < $params['close']) {
+            if (($statics['status'] ?? 0) !== 200) {
                 $open_order = false;
             }
 
-            if ($type_order == 'sell' && $lastPrice > $params['close']) {
-                $open_order = false;
+            if ($open_order && !$btc) {
+                $lastPrice = $statics['response']['lastPrice'];
+
+                if ($type_order == 'buy' && $lastPrice < $params['close']) {
+                    $open_order = false;
+                }
+
+                if ($type_order == 'sell' && $lastPrice > $params['close']) {
+                    $open_order = false;
+                }
             }
         }
 
@@ -881,7 +906,7 @@ final class Monitor
         return sprintf("%s%s", $color, $text);
     }
 
-    private function getInfoPriceBtc(int $limit = 5): array
+    private function getInfoPriceBtc(int $limit = 3): array
     {
         return $this->infoPrice(true, $limit)['scene'] ?? [];
     }
@@ -906,6 +931,10 @@ final class Monitor
 
     private function operation(array $operation, array $prices): void
     {
+        if ($this->operationDisable) {
+            return;
+        }
+
         if (!$this->hedgeMode && $this->configs->getSide() !== '.') {
             if (strnatcasecmp($this->configs->getSide(), $operation['type']) !== 0) {
                 return;
@@ -968,9 +997,7 @@ final class Monitor
                 );
 
                 // Gain greater than max/min or close to margin
-                if ($diff_price >= 0 ||
-                    abs($diff_price) <= ($profit * 0.8)
-                ) {
+                if (abs($diff_price) <= ($profit * 1.1)) {
                     return;
                 }
 
@@ -984,13 +1011,15 @@ final class Monitor
                 return;
             }
 
-            if ($param_order['type'] === 'buy') {
-                if ($price_order_close <= $param_order['price']) {
-                    return;
-                }
-            } else {
-                if ($price_order_close >= $param_order['price']) {
-                    return;
+            if (!$this->configs->getScalper()) {
+                if ($param_order['type'] === 'buy') {
+                    if ($price_order_close <= $param_order['price']) {
+                        return;
+                    }
+                } else {
+                    if ($price_order_close >= $param_order['price']) {
+                        return;
+                    }
                 }
             }
 
