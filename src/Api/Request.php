@@ -66,6 +66,7 @@ final class Request
     private function setOptions(array $vars): void
     {
         $vars['data']['timestamp'] = time() * 1e3;
+        $vars['data']['recvWindow'] = 60000;
         $params = http_build_query($vars['data']);
         $params .= '&signature=' . $this->signature($vars['data']);
         $vars['url'] .= '?'.$params;
