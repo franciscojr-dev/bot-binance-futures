@@ -80,7 +80,7 @@ foreach ($symbols as $symbol) {
                 "[%s] - Monitoring %s[%s]\n",
                 date('Y-m-d H:i:s'),
                 $monitor->textColor('yellow', $configs['operation']['symbol']),
-                $monitor->textColor('magenta', $configs['operation']['max_contracts'])
+                $monitor->textColor('magenta', $configs['operation']['leverage'].'x')
             );
 
             $monitor->init();
