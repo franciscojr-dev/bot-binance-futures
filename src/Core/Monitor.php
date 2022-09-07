@@ -395,11 +395,11 @@ final class Monitor
     {
         $percent = $this->pnlPositionPercentGain;
 
-        if ($leverage >= 50 && $leverage <= 75) {
+        if ($leverage >= 50) {
             $percent += $this->pnlAdditionalPercentGain;
         }
 
-        if ($leverage > 75) {
+        if ($leverage >= 75) {
             $percent += $this->pnlAdditionalPercentGain;
         }
 
@@ -410,11 +410,11 @@ final class Monitor
     {
         $percent = $this->pnlPositionPercentLoss;
 
-        if ($leverage >= 50 && $leverage <= 75) {
+        if ($leverage >= 50) {
             $percent += $this->pnlAdditionalPercentLoss;
         }
 
-        if ($leverage > 75) {
+        if ($leverage >= 75) {
             $percent += $this->pnlAdditionalPercentLoss;
         }
 
