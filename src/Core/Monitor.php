@@ -25,8 +25,10 @@ final class Monitor
     private $closeLossPosition = false;
     private $hedgeMode = false;
     private $softHedge = false;
+    private $safePosition = false;
     private $candleTime = '15m';
     private $candleLimit = 5;
+    private $candleConsecutive = 1;
     private $marginIndividualMin = 0;
     private $marginIndividualMax = 0;
     private $multiplePercentGain = 0;
@@ -70,8 +72,10 @@ final class Monitor
         $this->closeLossPosition = (bool) ($config['monitor']['close_loss_position'] ?? false);
         $this->hedgeMode = (bool) ($config['monitor']['hedge_mode'] ?? false);
         $this->softHedge = (bool) ($config['monitor']['soft_hedge'] ?? false);
+        $this->safePosition = (bool) ($config['monitor']['safe_position'] ?? false);
         $this->candleTime = $config['monitor']['candle_time'] ?? '15m';
         $this->candleLimit = $config['monitor']['candle_limit'] ?? 5;
+        $this->candleConsecutive = $config['monitor']['candle_consecutive'] ?? 1;
         $this->marginIndividualMin = $config['monitor']['margin_individual_min'] ?? 0;
         $this->marginIndividualMax = $config['monitor']['margin_individual_max'] ?? 0;
         $this->multiplePercentGain = $config['monitor']['multiple_percent_gain'] ?? 1;
@@ -507,6 +511,12 @@ final class Monitor
                         $priceClose = 0;
                     }
                 }
+
+                if ($priceClose && !$this->hasPriceOperation('sell', $priceClose)) {
+                    $priceClose = 0;
+
+                    echo $this->textColor('green', "Surfing the trend {$positionSide} [{$symbol}]\n");
+                }
             }
 
             if ($markPrice > $priceLoss && $unRealizedProfit < 0) {
@@ -629,6 +639,12 @@ final class Monitor
                     if ($unRealizedProfitHedge > $unRealizedProfit) {
                         $priceClose = 0;
                     }
+                }
+
+                if ($priceClose && !$this->hasPriceOperation('buy', $priceClose)) {
+                    $priceClose = 0;
+
+                    echo $this->textColor('green', "Surfing the trend {$positionSide} [{$symbol}]\n");
                 }
             }
 
@@ -949,13 +965,13 @@ final class Monitor
         $open_order = false;
 
         // buy
-        if ($params['now'] >= 1 && $params['last'] == 'buy') {
+        if ($params['now'] >= $this->candleConsecutive && $params['last'] == 'buy') {
             $open_order = true;
             $type_order = 'buy';
         }
 
         // sell
-        if ($params['now'] <= -1 && $params['last'] == 'sell') {
+        if ($params['now'] <= ($this->candleConsecutive * -1) && $params['last'] == 'sell') {
             $open_order = true;
             $type_order = 'sell';
         }
@@ -1164,6 +1180,27 @@ final class Monitor
 
             if (!$this->hasPriceOperation($param_order['type'], $price_order_close)) {
                 return;
+            }
+
+            if ($this->safePosition) {
+                $infoPrices = $this->infoPrice(false, $this->candleLimit * 2);
+
+                if (!$infoPrices) {
+                    return;
+                }
+
+                if ($param_order['type'] === 'buy') {
+                    $priceCheckCandle = $infoPrices['prices']['price_sell'];
+                } else {
+                    $priceCheckCandle = $infoPrices['prices']['price_buy'];
+                }
+
+                $profit = $this->getPnlPercentGain($this->configs->getLeverage()) / $this->configs->getLeverage();
+                $diffPriceOrder = abs(Position::percentage($price_order_close, $priceCheckCandle));
+
+                if ($diffPriceOrder <= $profit) {
+                    return;
+                }
             }
 
             if (!$this->configs->getScalper()) {
