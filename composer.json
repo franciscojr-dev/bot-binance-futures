@@ -1,7 +1,7 @@
 {
     "name": "franciscojr-dev/bot-binance-futures",
     "description": "Bot of trading from Binance",
-    "version": "1.3.0",
+    "version": "1.3.1",
     "type": "project",
     "license": "proprietary",
     "authors": [
@@ -25,11 +25,5 @@
         "ext-curl": "*",
         "ext-json": "*",
         "react/event-loop": "^1.3"
-    },
-    "repositories": [
-        {
-            "type": "vcs",
-            "url": "https://github.com/franciscojr-dev/bot-binance-futures.git"
-        }
-    ]
+    }
 }
