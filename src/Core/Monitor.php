@@ -26,6 +26,7 @@ final class Monitor
     private $hedgeMode = false;
     private $softHedge = false;
     private $safePosition = false;
+    private $orderReverse = false;
     private $candleTime = '15m';
     private $candleLimit = 5;
     private $candleConsecutive = 1;
@@ -73,6 +74,7 @@ final class Monitor
         $this->hedgeMode = (bool) ($config['monitor']['hedge_mode'] ?? false);
         $this->softHedge = (bool) ($config['monitor']['soft_hedge'] ?? false);
         $this->safePosition = (bool) ($config['monitor']['safe_position'] ?? false);
+        $this->orderReverse = (bool) ($config['monitor']['order_reverse'] ?? false);
         $this->candleTime = $config['monitor']['candle_time'] ?? '15m';
         $this->candleLimit = $config['monitor']['candle_limit'] ?? 5;
         $this->candleConsecutive = $config['monitor']['candle_consecutive'] ?? 1;
@@ -1159,26 +1161,9 @@ final class Monitor
                 return;
             }
 
-            $param_order = $this->paramsOfOrder([
-                'type' => $operation['type'],
-                'sell' => [
-                    'book' => $priceBook['sell'],
-                    'candle' => $prices['price_sell']
-                ],
-                'buy' => [
-                    'book' => $priceBook['buy'],
-                    'candle' => $prices['price_buy']
-                ],
-            ]);
+            $pricesOperation = $this->getPricesForOperation($operation['type'], $priceBook, $prices);
 
-            $price_order_close = Position::calculePriceOrder(
-                $param_order['type'],
-                $param_order['price'],
-                $this->getPnlPercentGain($this->configs->getLeverage()),
-                $this->configs->getLeverage()
-            );
-
-            if (!$this->hasPriceOperation($param_order['type'], $price_order_close)) {
+            if (!$this->hasPriceOperation($pricesOperation['origin']['param']['type'], $pricesOperation['origin']['price'])) {
                 return;
             }
 
@@ -1189,14 +1174,14 @@ final class Monitor
                     return;
                 }
 
-                if ($param_order['type'] === 'buy') {
+                if ($pricesOperation['origin']['param']['type'] === 'buy') {
                     $priceCheckCandle = $infoPrices['prices']['price_sell'];
                 } else {
                     $priceCheckCandle = $infoPrices['prices']['price_buy'];
                 }
 
                 $profit = $this->getPnlPercentGain($this->configs->getLeverage()) / $this->configs->getLeverage();
-                $diffPriceOrder = abs(Position::percentage($price_order_close, $priceCheckCandle));
+                $diffPriceOrder = abs(Position::percentage($pricesOperation['origin']['price'], $priceCheckCandle));
 
                 if ($diffPriceOrder <= $profit) {
                     return;
@@ -1204,12 +1189,12 @@ final class Monitor
             }
 
             if (!$this->configs->getScalper()) {
-                if ($param_order['type'] === 'buy') {
-                    if ($price_order_close <= $param_order['price']) {
+                if ($pricesOperation['origin']['param']['type'] === 'buy') {
+                    if ($pricesOperation['origin']['price'] <= $pricesOperation['origin']['param']['price']) {
                         return;
                     }
                 } else {
-                    if ($price_order_close >= $param_order['price']) {
+                    if ($pricesOperation['origin']['price'] >= $pricesOperation['origin']['param']['price']) {
                         return;
                     }
                 }
@@ -1217,40 +1202,102 @@ final class Monitor
 
             if ($this->operations && $operation['enable']) {
                 if ($this->debug) {
-                    $colorSide = $param_order['type'] == 'buy' ? 'green' : 'red';
+                    $colorSide = $pricesOperation['origin']['param']['type'] == 'buy' ? 'green' : 'red';
 
                     print(str_repeat('-', 60)."\n");
                     printf("Symbol: %s\n", $this->configs->getSymbol());
-                    printf("Side: %s\n", $this->textColor($colorSide, $param_order['type']));
-                    printf("Open: %s\n", $param_order['price']);
-                    printf("Quantity: %s\n", $param_order['quantity']);
+                    printf("Side: %s\n", $this->textColor($colorSide, $pricesOperation['origin']['param']['type']));
+                    printf("Open: %s\n", $pricesOperation['origin']['param']['price']);
+                    printf("Quantity: %s\n", $pricesOperation['origin']['param']['quantity']);
                     print(str_repeat('-', 60)."\n");
                 }
 
-                $this->orderProfit($param_order, $price_order_close);
+                $this->orderProfit($pricesOperation['origin']['param'], $pricesOperation['origin']['price']);
+
+                if ($this->orderReverse) {
+                    $this->orderProfit($pricesOperation['reverse']['param'], $pricesOperation['reverse']['price']);
+                }
             }
         }
     }
 
+    private function getPricesForOperation(string $type, array $priceBook, array $prices): array
+    {
+        $typeReverse = $type == 'buy' ? 'sell' : 'buy';
+        $paramOrderOrigin = $this->paramsOfOrder([
+            'type' => $type,
+            'sell' => [
+                'book' => $priceBook['sell'],
+                'candle' => $prices['price_sell']
+            ],
+            'buy' => [
+                'book' => $priceBook['buy'],
+                'candle' => $prices['price_buy']
+            ],
+        ]);
+        $priceOrderOrigin = Position::calculePriceOrder(
+            $paramOrderOrigin['type'],
+            $paramOrderOrigin['price'],
+            $this->getPnlPercentGain($this->configs->getLeverage()),
+            $this->configs->getLeverage()
+        );
+
+        $paramOrderReverse = $this->paramsOfOrder([
+            'type' => $typeReverse,
+            'sell' => [
+                'book' => $priceBook['sell'],
+                'candle' => $prices['price_sell']
+            ],
+            'buy' => [
+                'book' => $priceBook['buy'],
+                'candle' => $prices['price_buy']
+            ],
+        ]);
+        $priceOrderReverse = Position::calculePriceOrder(
+            $paramOrderReverse['type'],
+            $paramOrderReverse['price'],
+            $this->getPnlPercentGain($this->configs->getLeverage()),
+            $this->configs->getLeverage()
+        );
+
+        return [
+            'origin' => [
+                'param' => $paramOrderOrigin,
+                'price' => $priceOrderOrigin
+            ],
+            'reverse' => [
+                'param' => $paramOrderReverse,
+                'price' => $priceOrderReverse
+            ]
+        ];
+    }
+
     private function hasPriceOperation(string $type, float $priceClose): bool
     {
+        $profit = $this->getPnlPercentGain($this->configs->getLeverage()) / $this->configs->getLeverage();
         $statics = $this->getStaticsTicker();
 
         if ($statics['status'] != 200) {
             return false;
         }
 
-        $check_price = $type == 'buy'
-            ? $statics['response']['highPrice']
-            : $statics['response']['lowPrice'];
-        $diff_price = Position::percentage($priceClose, $check_price);
-        $profit = $this->getPnlPercentGain($this->configs->getLeverage()) / $this->configs->getLeverage();
+        // Gain greater than max or close to margin
+        $diff_price = Position::percentage($priceClose, $statics['response']['highPrice']);
 
-        // Gain greater than max/min or close to margin
         if (abs($diff_price) <= ($profit * $this->multiplePercentGain)) {
             return false;
         }
 
+        // Gain greater than min or close to margin
+        $diff_price = Position::percentage($priceClose, $statics['response']['lowPrice']);
+
+        if (abs($diff_price) <= ($profit * $this->multiplePercentGain)) {
+            return false;
+        }
+
+        $check_price = $type == 'buy'
+            ? $statics['response']['highPrice']
+            : $statics['response']['lowPrice'];
         $lastPrice = (float) $statics['response']['lastPrice'];
         $priceChangePercent = abs(Position::percentage($lastPrice, $check_price));
 
