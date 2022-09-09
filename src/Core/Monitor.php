@@ -27,6 +27,8 @@ final class Monitor
     private $softHedge = false;
     private $safePosition = false;
     private $orderReverse = false;
+    private $maxOrders = 1;
+    private $timeoutOrder = 10;
     private $candleTime = '15m';
     private $candleLimit = 5;
     private $candleConsecutive = 1;
@@ -75,6 +77,8 @@ final class Monitor
         $this->softHedge = (bool) ($config['monitor']['soft_hedge'] ?? false);
         $this->safePosition = (bool) ($config['monitor']['safe_position'] ?? false);
         $this->orderReverse = (bool) ($config['monitor']['order_reverse'] ?? false);
+        $this->maxOrders = $config['monitor']['max_orders'] ?? 1;
+        $this->timeoutOrder = $config['monitor']['timeout_order'] ?? 10;
         $this->candleTime = $config['monitor']['candle_time'] ?? '15m';
         $this->candleLimit = $config['monitor']['candle_limit'] ?? 5;
         $this->candleConsecutive = $config['monitor']['candle_consecutive'] ?? 1;
@@ -336,7 +340,7 @@ final class Monitor
 
     private function isTimeBoxOrder(int $orderTime, bool $closePosition = false): bool
     {
-        $timeoutOrder = $this->configs->getTimeoutOrder();
+        $timeoutOrder = $this->timeoutOrder;
         $timeoutOrder *= $closePosition ? 3 : 1;
 
         return $this->getTimeOrder($orderTime) >= $timeoutOrder;
@@ -792,7 +796,7 @@ final class Monitor
                 }
             }
 
-            if ($ordersTotal >= $this->configs->getMaxOrders()) {
+            if ($ordersTotal >= $this->maxOrders) {
                 if ($this->debug) {
                     echo $this->textColor('blue', "Maximum open orders [{$symbol}]\n");
                 }
