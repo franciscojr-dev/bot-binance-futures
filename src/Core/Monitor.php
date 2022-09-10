@@ -237,7 +237,7 @@ final class Monitor
     {
         $positions = [];
 
-        foreach ($this->position as $position) {
+        foreach ($this->position() as $position) {
             $positions[$position['positionSide']] = $position;
         }
 
@@ -482,7 +482,10 @@ final class Monitor
 
         if ($margin >= $marginIndividual) {
             $this->setOperations(false);
-            echo $this->textColor('red', "Maximum margin used {$positionSide} [{$symbol}]\n");
+
+            if ($operation['enable']) {
+                echo $this->textColor('red', "Maximum margin used {$positionSide} [{$symbol}]\n");
+            }
         } else {
             if ($operationSide == $positionSide) {
                 $this->setOperations(
@@ -513,7 +516,7 @@ final class Monitor
                     $positionHedge = $this->getPostionBySide('LONG');
                     $unRealizedProfitHedge = abs($positionHedge['unRealizedProfit']);
 
-                    if ($unRealizedProfitHedge > $unRealizedProfit) {
+                    if ($unRealizedProfit < $unRealizedProfitHedge) {
                         $priceClose = 0;
                     }
                 }
@@ -584,11 +587,11 @@ final class Monitor
             }
 
             if ($msg && $priceClose) {
-                if (!$this->checkMaxOrders('buy', $symbol)) {
+                if (!$closed && !$this->checkMaxOrders('buy', $symbol)) {
                     return false;
                 }
 
-                if ($positionHedge ?? false) {
+                if (!$closed && ($positionHedge ?? false)) {
                     $positionHedge = $this->getPostionBySide('LONG');
                     $notionalHedge = abs((float) $positionHedge['notional']);
                     $leverageHedge = (int) $positionHedge['leverage'];
@@ -642,7 +645,7 @@ final class Monitor
                     $positionHedge = $this->getPostionBySide('SHORT');
                     $unRealizedProfitHedge = abs($positionHedge['unRealizedProfit']);
 
-                    if ($unRealizedProfitHedge > $unRealizedProfit) {
+                    if ($unRealizedProfit < $unRealizedProfitHedge) {
                         $priceClose = 0;
                     }
                 }
@@ -713,11 +716,11 @@ final class Monitor
             }
 
             if ($msg && $priceClose) {
-                if (!$this->checkMaxOrders('sell', $symbol)) {
+                if (!$closed && !$this->checkMaxOrders('sell', $symbol)) {
                     return false;
                 }
 
-                if ($positionHedge ?? false) {
+                if (!$closed && ($positionHedge ?? false)) {
                     $positionHedge = $this->getPostionBySide('SHORT');
                     $notionalHedge = abs((float) $positionHedge['notional']);
                     $leverageHedge = (int) $positionHedge['leverage'];
@@ -1172,7 +1175,7 @@ final class Monitor
             }
 
             if ($this->safePosition) {
-                $infoPrices = $this->infoPrice(false, $this->candleLimit * 2);
+                $infoPrices = $this->infoPrice(false, $this->candleLimit);
 
                 if (!$infoPrices) {
                     return;
