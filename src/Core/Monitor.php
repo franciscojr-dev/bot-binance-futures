@@ -23,6 +23,9 @@ final class Monitor
     private $maxTry = 0;
     private $multipleOrder = 0;
     private $closeLossPosition = false;
+    private $stopPreventive = false;
+    private $hedgePositionLong = true;
+    private $hedgePositionShort = true;
     private $hedgeMode = false;
     private $softHedge = false;
     private $safePosition = false;
@@ -32,6 +35,7 @@ final class Monitor
     private $candleTime = '15m';
     private $candleLimit = 5;
     private $candleConsecutive = 1;
+    private $candleClosed = false;
     private $marginIndividualMin = 0;
     private $marginIndividualMax = 0;
     private $multiplePercentGain = 0;
@@ -73,6 +77,9 @@ final class Monitor
         $this->maxTry = $config['monitor']['max_try'] ?? 0;
         $this->multipleOrder = $config['monitor']['multiple_order'] ?? 0;
         $this->closeLossPosition = (bool) ($config['monitor']['close_loss_position'] ?? false);
+        $this->stopPreventive = (bool) ($config['monitor']['stop_preventive'] ?? false);
+        $this->hedgePositionLong = (bool) ($config['monitor']['hedge_position_long'] ?? false);
+        $this->hedgePositionShort = (bool) ($config['monitor']['hedge_position_short'] ?? false);
         $this->hedgeMode = (bool) ($config['monitor']['hedge_mode'] ?? false);
         $this->softHedge = (bool) ($config['monitor']['soft_hedge'] ?? false);
         $this->safePosition = (bool) ($config['monitor']['safe_position'] ?? false);
@@ -82,6 +89,7 @@ final class Monitor
         $this->candleTime = $config['monitor']['candle_time'] ?? '15m';
         $this->candleLimit = $config['monitor']['candle_limit'] ?? 5;
         $this->candleConsecutive = $config['monitor']['candle_consecutive'] ?? 1;
+        $this->candleClosed = (bool) ($config['monitor']['candle_closed'] ?? false);
         $this->marginIndividualMin = $config['monitor']['margin_individual_min'] ?? 0;
         $this->marginIndividualMax = $config['monitor']['margin_individual_max'] ?? 0;
         $this->multiplePercentGain = $config['monitor']['multiple_percent_gain'] ?? 1;
@@ -395,10 +403,10 @@ final class Monitor
 
     private function calcPercentage(float $value1, float $percentage): float
     {
-        $value = bcmul((string) $value1, (string) (100 - $percentage), 4);
-        $value = bcdiv($value, '100', 4);
+        $value = bcmul((string) $value1, (string) (100 - $percentage), 8);
+        $value = bcdiv($value, '100', 8);
 
-        return (float) bcsub((string) $value1, $value, 4);
+        return (float) bcsub((string) $value1, $value, 8);
     }
 
     private function getPnlPercentGain(int $leverage): int
@@ -410,6 +418,14 @@ final class Monitor
         }
 
         if ($leverage >= 75) {
+            $percent += $this->pnlAdditionalPercentGain;
+        }
+
+        if ($leverage >= 100) {
+            $percent += $this->pnlAdditionalPercentGain;
+        }
+
+        if ($leverage >= 125) {
             $percent += $this->pnlAdditionalPercentGain;
         }
 
@@ -428,7 +444,26 @@ final class Monitor
             $percent += $this->pnlAdditionalPercentLoss;
         }
 
+        if ($leverage >= 100) {
+            $percent += $this->pnlAdditionalPercentLoss;
+        }
+
+        if ($leverage >= 125) {
+            $percent += $this->pnlAdditionalPercentLoss;
+        }
+
         return $percent;
+    }
+
+    private function getLastCandleData(): array
+    {
+        $candles = $this->getCandles(false, 2);
+
+        if ($candles['status'] !== 200) {
+            return [];
+        }
+
+        return $this->evaluationOfScene($candles['response']);
     }
 
     private function availableOrders(array $position, array $operation, array $prices): bool
@@ -494,6 +529,7 @@ final class Monitor
             }
         }
 
+        $lastCandleData = $this->getLastCandleData();
         $bookPriceBuy = $priceBook['buy'];
         $bookPriceSell = $priceBook['sell'];
         $force = false;
@@ -501,12 +537,16 @@ final class Monitor
         if ($side == 'Sell') {
             $priceLoss = (float) bcadd((string) $entryPrice, (string) $diffPriceLoss, 8);
             $priceGain = (float) bcsub((string) $entryPrice, (string) $diffPriceGain, 8);
-
             $msg = '';
             $priceClose = 0;
             $result = '';
+            $stopPreventive = false;
 
-            if ($markPrice < $priceGain && $unRealizedProfit > 0) {
+            if ($this->stopPreventive && $lastCandleData['enable'] && $lastCandleData['type'] === 'buy') {
+                $stopPreventive = true;
+            }
+
+            if (($markPrice < $priceGain || $stopPreventive) && $unRealizedProfit > 0) {
                 $msg = "Maximum %s [%.4f] - (%.4f < %.4f) | %.4f USDT - %s [%s]\n";
                 $result = $this->textColor('green', 'gain');
                 $priceClose = $priceGain;
@@ -528,69 +568,69 @@ final class Monitor
                 }
             }
 
-            if ($markPrice > $priceLoss && $unRealizedProfit < 0) {
+            if (($markPrice > $priceLoss || $stopPreventive) && $unRealizedProfit < 0) {
                 $msg = "Maximum %s [%.4f] - (%.4f > %.4f) | %.4f USDT - %s [%s]\n";
                 $result = $this->textColor('red', 'loss');
                 $priceClose = $priceLoss;
 
-                if ($this->closeLossPosition) {
+                if ($this->closeLossPosition || $stopPreventive) {
                     $force = true;
                 } else {
-                    $positionHedge = $this->getPostionBySide('LONG');
-                    $positionAmtHedge = abs($positionHedge['positionAmt']);
-                    $diffPriceClose = $this->calcPercentage($markPrice, $profit);
-                    $priceCloseOrder = (float) bcadd((string) $markPrice, (string) $diffPriceClose, 8);
-                    $hasPriceOperation = $this->hasPriceOperation('buy', $priceCloseOrder);
-                    $diffPriceOrder = abs(Position::percentage($bookPriceBuy, $prices['price_sell']));
-                    $closed = false;
+                    if ($this->hedgePositionShort) {
+                        $positionHedge = $this->getPostionBySide('LONG');
+                        $positionAmtHedge = abs($positionHedge['positionAmt']);
+                        $diffPriceClose = $this->calcPercentage($markPrice, $profit);
+                        $priceCloseOrder = (float) bcadd((string) $markPrice, (string) $diffPriceClose, 8);
+                        $hasPriceOperation = $this->hasPriceOperation('buy', $priceCloseOrder);
+                        $diffPriceOrder = abs(Position::percentage($bookPriceBuy, $prices['price_sell']));
+                        $closed = false;
 
-                    if ($this->softHedge) {
-                        if ($operation['enable']) {
-                            if ($operation['type'] != 'buy') {
+                        if ($this->softHedge) {
+                            if ($operation['enable']) {
+                                if ($operation['type'] != 'buy') {
+                                    $hasPriceOperation = false;
+                                }
+                            } else {
                                 $hasPriceOperation = false;
                             }
-                        } else {
-                            $hasPriceOperation = false;
-                        }
 
-                        if ($hasPriceOperation && $diffPriceOrder <= $profit) {
-                            $hasPriceOperation = false;
-                        }
+                            if ($hasPriceOperation && $diffPriceOrder <= $profit) {
+                                $hasPriceOperation = false;
+                            }
 
-                        if (!$hasPriceOperation) {
-                            $priceClose = 0;
-                        }
-                    } else {
-                        $force = true;
-                    }
-
-                    if ($positionAmtHedge && $priceClose) {
-                        if ($positionAmtHedge >= $position['positionAmt']) {
-                            $entryPriceHedge = (float) $positionHedge['entryPrice'];
-                            $averagePrice = bcadd((string) $entryPrice, (string) $entryPriceHedge, 8);
-                            $averagePrice = (float) bcdiv($averagePrice, '2', 8);
-
-                            if (!$this->softHedge && $markPrice < $averagePrice) {
-                                $closed = true;
-                            } else {
+                            if (!$hasPriceOperation) {
                                 $priceClose = 0;
                             }
                         } else {
-                            $position['positionAmt'] -= $positionAmtHedge;
+                            $force = true;
                         }
-                    }
 
-                    if ($position['positionAmt'] > $positionAmtOrigin) {
+                        if ($positionAmtHedge && $priceClose) {
+                            if ($positionAmtHedge >= $position['positionAmt']) {
+                                $entryPriceHedge = (float) $positionHedge['entryPrice'];
+                                $averagePrice = bcadd((string) $entryPrice, (string) $entryPriceHedge, 8);
+                                $averagePrice = (float) bcdiv($averagePrice, '2', 8);
+
+                                if (!$this->softHedge && $markPrice > $averagePrice) {
+                                    $closed = true;
+                                } else {
+                                    $priceClose = 0;
+                                }
+                            } else {
+                                $position['positionAmt'] -= $positionAmtHedge;
+                            }
+                        }
+
+                        if ($position['positionAmt'] > $positionAmtOrigin) {
+                            $priceClose = 0;
+                        }
+                    } else {
                         $priceClose = 0;
                     }
                 }
             }
 
             if ($msg && $priceClose) {
-                if (!$closed && !$this->checkMaxOrders('buy', $symbol)) {
-                    return false;
-                }
-
                 if (!$closed && ($positionHedge ?? false)) {
                     $positionHedge = $this->getPostionBySide('LONG');
                     $notionalHedge = abs((float) $positionHedge['notional']);
@@ -634,8 +674,13 @@ final class Monitor
             $msg = '';
             $result = '';
             $priceClose = 0;
+            $stopPreventive = false;
 
-            if ($markPrice > $priceGain && $unRealizedProfit > 0) {
+            if ($this->stopPreventive && $lastCandleData['enable'] && $lastCandleData['type'] === 'sell') {
+                $stopPreventive = true;
+            }
+
+            if (($markPrice > $priceGain || $stopPreventive) && $unRealizedProfit > 0) {
                 $msg = "Maximum %s [%.4f] - (%.4f > %.4f) | %.4f USDT - %s [%s]\n";
                 $result = $this->textColor('green', 'gain');
                 $priceClose = $priceGain;
@@ -657,69 +702,69 @@ final class Monitor
                 }
             }
 
-            if ($markPrice < $priceLoss && $unRealizedProfit < 0) {
+            if (($markPrice < $priceLoss || $stopPreventive) && $unRealizedProfit < 0) {
                 $msg = "Maximum %s [%.4f] - (%.4f < %.4f) | %.4f USDT - %s [%s]\n";
                 $result = $this->textColor('red', 'loss');
                 $priceClose = $priceLoss;
 
-                if ($this->closeLossPosition) {
+                if ($this->closeLossPosition || $stopPreventive) {
                     $force = true;
                 } else {
-                    $positionHedge = $this->getPostionBySide('SHORT');
-                    $positionAmtHedge = abs($positionHedge['positionAmt']);
-                    $diffPriceClose = $this->calcPercentage($markPrice, $profit);
-                    $priceCloseOrder = (float) bcsub((string) $markPrice, (string) $diffPriceClose, 8);
-                    $hasPriceOperation = $this->hasPriceOperation('sell', $priceCloseOrder);
-                    $diffPriceOrder = abs(Position::percentage($bookPriceBuy, $prices['price_buy']));
-                    $closed = false;
+                    if ($this->hedgePositionLong) {
+                        $positionHedge = $this->getPostionBySide('SHORT');
+                        $positionAmtHedge = abs($positionHedge['positionAmt']);
+                        $diffPriceClose = $this->calcPercentage($markPrice, $profit);
+                        $priceCloseOrder = (float) bcsub((string) $markPrice, (string) $diffPriceClose, 8);
+                        $hasPriceOperation = $this->hasPriceOperation('sell', $priceCloseOrder);
+                        $diffPriceOrder = abs(Position::percentage($bookPriceBuy, $prices['price_buy']));
+                        $closed = false;
 
-                    if ($this->softHedge) {
-                        if ($operation['enable']) {
-                            if ($operation['type'] != 'sell') {
+                        if ($this->softHedge) {
+                            if ($operation['enable']) {
+                                if ($operation['type'] != 'sell') {
+                                    $hasPriceOperation = false;
+                                }
+                            } else {
                                 $hasPriceOperation = false;
                             }
-                        } else {
-                            $hasPriceOperation = false;
-                        }
 
-                        if ($hasPriceOperation && $diffPriceOrder <= $profit) {
-                            $hasPriceOperation = false;
-                        }
+                            if ($hasPriceOperation && $diffPriceOrder <= $profit) {
+                                $hasPriceOperation = false;
+                            }
 
-                        if (!$hasPriceOperation) {
-                            $priceClose = 0;
-                        }
-                    } else {
-                        $force = true;
-                    }
-
-                    if ($positionAmtHedge && $priceClose) {
-                        if ($positionAmtHedge >= $position['positionAmt']) {
-                            $entryPriceHedge = (float) $positionHedge['entryPrice'];
-                            $averagePrice = bcadd((string) $entryPrice, (string) $entryPriceHedge, 8);
-                            $averagePrice = (float) bcdiv($averagePrice, '2', 8);
-
-                            if (!$this->softHedge && $markPrice > $averagePrice) {
-                                $closed = true;
-                            } else {
+                            if (!$hasPriceOperation) {
                                 $priceClose = 0;
                             }
                         } else {
-                            $position['positionAmt'] -= $positionAmtHedge;
+                            $force = true;
                         }
-                    }
 
-                    if ($position['positionAmt'] > $positionAmtOrigin) {
+                        if ($positionAmtHedge && $priceClose) {
+                            if ($positionAmtHedge >= $position['positionAmt']) {
+                                $entryPriceHedge = (float) $positionHedge['entryPrice'];
+                                $averagePrice = bcadd((string) $entryPrice, (string) $entryPriceHedge, 8);
+                                $averagePrice = (float) bcdiv($averagePrice, '2', 8);
+
+                                if (!$this->softHedge && $markPrice < $averagePrice) {
+                                    $closed = true;
+                                } else {
+                                    $priceClose = 0;
+                                }
+                            } else {
+                                $position['positionAmt'] -= $positionAmtHedge;
+                            }
+                        }
+
+                        if ($position['positionAmt'] > $positionAmtOrigin) {
+                            $priceClose = 0;
+                        }
+                    } else {
                         $priceClose = 0;
                     }
                 }
             }
 
             if ($msg && $priceClose) {
-                if (!$closed && !$this->checkMaxOrders('sell', $symbol)) {
-                    return false;
-                }
-
                 if (!$closed && ($positionHedge ?? false)) {
                     $positionHedge = $this->getPostionBySide('SHORT');
                     $notionalHedge = abs((float) $positionHedge['notional']);
@@ -870,8 +915,12 @@ final class Monitor
         );
     }
 
-    private function getCandles(bool $btc = false, int $limit = 3): array
+    private function getCandles(bool $btc = false, int $limit = 3, bool $closed = false): array
     {
+        if ($this->candleClosed || $closed) {
+            $limit += 1;
+        }
+
         $return = $this->waitRateLimit(
             $this->request->get('/continuousKlines', [
                 'pair' => !$btc ? $this->configs->getSymbol() : 'BTCUSDT',
@@ -903,6 +952,10 @@ final class Monitor
 
             return array_combine($keys, $v);
         }, $return['response']);
+
+        if ($this->candleClosed || $closed) {
+            array_pop($return['response']);
+        }
 
         return $return;
     }
@@ -972,15 +1025,16 @@ final class Monitor
     {
         $type_order = '';
         $open_order = false;
+        $candleConsecutive = $this->stopPreventive ? ($this->candleConsecutive * 2) : $this->candleConsecutive;
 
         // buy
-        if ($params['now'] >= $this->candleConsecutive && $params['last'] == 'buy') {
+        if ($params['now'] >= $candleConsecutive && $params['last'] == 'buy') {
             $open_order = true;
             $type_order = 'buy';
         }
 
         // sell
-        if ($params['now'] <= ($this->candleConsecutive * -1) && $params['last'] == 'sell') {
+        if ($params['now'] <= ($candleConsecutive * -1) && $params['last'] == 'sell') {
             $open_order = true;
             $type_order = 'sell';
         }
@@ -1190,7 +1244,7 @@ final class Monitor
                 $profit = $this->getPnlPercentGain($this->configs->getLeverage()) / $this->configs->getLeverage();
                 $diffPriceOrder = abs(Position::percentage($pricesOperation['origin']['price'], $priceCheckCandle));
 
-                if ($diffPriceOrder <= $profit) {
+                if ($diffPriceOrder <= $profit * $this->multiplePercentGain) {
                     return;
                 }
             }
@@ -1302,13 +1356,19 @@ final class Monitor
             return false;
         }
 
-        $check_price = $type == 'buy'
+        $priceOpen = (float) $statics['response']['openPrice'];
+        $lastPrice = (float) $statics['response']['lastPrice'];
+        $priceExtreme = $type == 'buy'
             ? $statics['response']['highPrice']
             : $statics['response']['lowPrice'];
-        $lastPrice = (float) $statics['response']['lastPrice'];
-        $priceChangePercent = abs(Position::percentage($lastPrice, $check_price));
+        $changePercentDay = abs(Position::percentage($lastPrice, $priceOpen));
+        $changePercentExtreme = abs(Position::percentage($lastPrice, $priceExtreme));
 
-        if ($priceChangePercent >= $this->priceChangePercent) {
+        if ($changePercentDay >= $this->priceChangePercent
+            || $changePercentExtreme >= $this->priceChangePercent
+        ) {
+            echo $this->textColor('cyan', "Maximum daily variation [{$this->configs->getSymbol()}]\n");
+
             return false;
         }
 
