@@ -20,9 +20,18 @@ $symbols = glob(__DIR__ . "/configs/monitor_*{$runSymbol}.ini");
 $delayLoop = 0;
 $delayIncrement = 1;
 $increment = 0;
+$authInfo = parse_ini_file(__DIR__ . '/configs/auth.ini', true, INI_SCANNER_RAW);
+$totalSymbols = count($symbols);
+$serverId = (int) ($authInfo['server']['id'] ?? 0);
+$serverTotal = (int) ($authInfo['server']['total'] ?? 1);
+$symbolPerServer = (int) ($totalSymbols / $serverTotal);
+$startSymbol = $symbolPerServer * $serverId;
+$endSymbol = $symbolPerServer;
+$endSymbol += $startSymbol > 0 ? $startSymbol : 0;
 
 if (empty($runSymbol)) {
-    foreach ($symbols as $symbol) {
+    for ($i = $startSymbol; $i < $endSymbol; $i++) {
+        $symbol = $symbols[$i];
         $configs = parse_ini_file($symbol, true, INI_SCANNER_RAW);
 
         if ($increment > 0 && $increment % 5 === 0) {
@@ -39,8 +48,6 @@ if (empty($runSymbol)) {
 
     exit(0);
 }
-
-$authInfo = parse_ini_file(__DIR__ . '/configs/auth.ini', true, INI_SCANNER_RAW);
 
 $request = new Request(new ConfigRequest([
     'public_key' => $authInfo['info']['public_key'],
