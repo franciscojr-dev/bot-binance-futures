@@ -23,6 +23,7 @@ final class Monitor
     private $maxTry = 0;
     private $multipleOrder = 0;
     private $closeLossPosition = false;
+    private $closeLossPositionHedge = false;
     private $stopPreventive = false;
     private $hedgePositionLong = true;
     private $hedgePositionShort = true;
@@ -36,6 +37,7 @@ final class Monitor
     private $candleLimit = 5;
     private $candleConsecutive = 1;
     private $candleClosed = false;
+    private $amountGainMin = 0;
     private $marginIndividualMin = 0;
     private $marginIndividualMax = 0;
     private $multiplePercentGain = 0;
@@ -77,6 +79,7 @@ final class Monitor
         $this->maxTry = $config['monitor']['max_try'] ?? 0;
         $this->multipleOrder = $config['monitor']['multiple_order'] ?? 0;
         $this->closeLossPosition = (bool) ($config['monitor']['close_loss_position'] ?? false);
+        $this->closeLossPositionHedge = (bool) ($config['monitor']['close_loss_position_hedge'] ?? false);
         $this->stopPreventive = (bool) ($config['monitor']['stop_preventive'] ?? false);
         $this->hedgePositionLong = (bool) ($config['monitor']['hedge_position_long'] ?? false);
         $this->hedgePositionShort = (bool) ($config['monitor']['hedge_position_short'] ?? false);
@@ -90,6 +93,7 @@ final class Monitor
         $this->candleLimit = $config['monitor']['candle_limit'] ?? 5;
         $this->candleConsecutive = $config['monitor']['candle_consecutive'] ?? 1;
         $this->candleClosed = (bool) ($config['monitor']['candle_closed'] ?? false);
+        $this->amountGainMin = $config['monitor']['amount_gain_min'] ?? 0;
         $this->marginIndividualMin = $config['monitor']['margin_individual_min'] ?? 0;
         $this->marginIndividualMax = $config['monitor']['margin_individual_max'] ?? 0;
         $this->multiplePercentGain = $config['monitor']['multiple_percent_gain'] ?? 1;
@@ -328,14 +332,15 @@ final class Monitor
         }
 
         foreach($response['response'] as $order) {
+            $closePosition = (bool) ($this->hedgeMode ? $order['reduceOnly'] : false);
             $type = Position::typeOrder($this->position['positionAmt'] ?? 0);
 
-            if (!$order['reduceOnly'] && (!$type || strnatcasecmp($order['side'], $type) === 0)) {
+            if (!$type || strnatcasecmp($order['side'], $type) === 0) {
                 if ($order['status'] != 'NEW') {
                     continue;
                 }
 
-                if ($this->isTimeBoxOrder((int) $order['time'])) {
+                if ($this->isTimeBoxOrder((int) $order['time'], $closePosition)) {
                     if ($this->debug) {
                         printf($this->textColor('blue', "%s Order canceled\n"), $order['orderId']);
                     }
@@ -546,7 +551,7 @@ final class Monitor
                 $stopPreventive = true;
             }
 
-            if (($markPrice < $priceGain || $stopPreventive) && $unRealizedProfit > 0) {
+            if (($markPrice < $priceGain || $stopPreventive) && $unRealizedProfit > $this->amountGainMin) {
                 $msg = "Maximum %s [%.4f] - (%.4f < %.4f) | %.4f USDT - %s [%s]\n";
                 $result = $this->textColor('green', 'gain');
                 $priceClose = $priceGain;
@@ -611,7 +616,7 @@ final class Monitor
                                 $averagePrice = bcadd((string) $entryPrice, (string) $entryPriceHedge, 8);
                                 $averagePrice = (float) bcdiv($averagePrice, '2', 8);
 
-                                if (!$this->softHedge && $markPrice > $averagePrice) {
+                                if (!$this->softHedge && $this->closeLossPositionHedge && $markPrice > $averagePrice) {
                                     $closed = true;
                                 } else {
                                     $priceClose = 0;
@@ -680,7 +685,7 @@ final class Monitor
                 $stopPreventive = true;
             }
 
-            if (($markPrice > $priceGain || $stopPreventive) && $unRealizedProfit > 0) {
+            if (($markPrice > $priceGain || $stopPreventive) && $unRealizedProfit > $this->amountGainMin) {
                 $msg = "Maximum %s [%.4f] - (%.4f > %.4f) | %.4f USDT - %s [%s]\n";
                 $result = $this->textColor('green', 'gain');
                 $priceClose = $priceGain;
@@ -745,7 +750,7 @@ final class Monitor
                                 $averagePrice = bcadd((string) $entryPrice, (string) $entryPriceHedge, 8);
                                 $averagePrice = (float) bcdiv($averagePrice, '2', 8);
 
-                                if (!$this->softHedge && $markPrice < $averagePrice) {
+                                if (!$this->softHedge && $this->closeLossPositionHedge && $markPrice < $averagePrice) {
                                     $closed = true;
                                 } else {
                                     $priceClose = 0;
@@ -1162,10 +1167,13 @@ final class Monitor
         $default = $this->configs->getOrderContracts();
         preg_match('/\.([0-9]+)/', $default, $temp);
         $decimal = strlen($temp[1] ?? '');
-        $contracts = bcdiv('5', (string) $price, 4);
+        $contracts = bcdiv('5.10', (string) $price, 4);
 
         if (!$decimal) {
             $contracts = ceil($contracts);
+        } else {
+            $regex = sprintf('/(.\.\d{%d})(\d+)/m', $decimal);
+            $contracts = preg_replace($regex, '$1', $contracts);
         }
 
         if ($contracts < $default) {
@@ -1365,7 +1373,7 @@ final class Monitor
         $changePercentExtreme = abs(Position::percentage($lastPrice, $priceExtreme));
 
         if ($changePercentDay >= $this->priceChangePercent
-            || $changePercentExtreme >= $this->priceChangePercent
+            || $changePercentExtreme >= ($this->priceChangePercent * $this->multiplePercentGain)
         ) {
             echo $this->textColor('cyan', "Maximum daily variation [{$this->configs->getSymbol()}]\n");
 
