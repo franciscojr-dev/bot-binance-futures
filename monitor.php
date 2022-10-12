@@ -21,13 +21,24 @@ $delayLoop = 0;
 $delayIncrement = 1;
 $increment = 0;
 $authInfo = parse_ini_file(__DIR__ . '/configs/auth.ini', true, INI_SCANNER_RAW);
-$totalSymbols = count($symbols);
+$listSymbols = parse_ini_file(__DIR__ . '/configs/allow_symbols.ini', true, INI_SCANNER_RAW);
+$listSymbols = $listSymbols ? $listSymbols['symbols'] : [];
+$totalSymbols = $listSymbols ? count($listSymbols) : count($symbols);
 $serverId = (int) ($authInfo['server']['id'] ?? 0);
 $serverTotal = (int) ($authInfo['server']['total'] ?? 1);
 $symbolPerServer = (int) ($totalSymbols / $serverTotal);
 $startSymbol = $symbolPerServer * $serverId;
 $endSymbol = $symbolPerServer;
 $endSymbol += $startSymbol > 0 ? $startSymbol : 0;
+
+if ($listSymbols) {
+    $symbols = array_values(
+        array_filter($symbols, function($v, $k) use ($listSymbols) {
+            $symbol = preg_replace('/(.*)monitor\_(.*)\.ini/', '$2', $v);
+            return in_array($symbol, $listSymbols);
+        }, \ARRAY_FILTER_USE_BOTH)
+    );
+}
 
 if (empty($runSymbol)) {
     for ($i = $startSymbol; $i < $endSymbol; $i++) {
@@ -60,50 +71,64 @@ foreach ($symbols as $symbol) {
     $configs = parse_ini_file($symbol, true, INI_SCANNER_RAW);
 
     $loop->addPeriodicTimer($runDelay, function () use ($request, $configs) {
-        $db = new DB(__DIR__ . '/db/bot.db');
-        $db->busyTimeout(5e4);
+        try {
+            $db = new DB(__DIR__ . '/db/bot.db');
+            $db->busyTimeout(5e4);
 
-        $monitor = new Monitor(new ConfigMonitor([
-            'symbol' => $configs['operation']['symbol'],
-            'side' => $configs['operation']['side'],
-            'profit' => $configs['operation']['profit'],
-            'leverage' => $configs['operation']['leverage'],
-            'scalper' => $configs['operation']['scalper'],
-            'loss_position' => $configs['operation']['loss_position'],
-            'close_position' => $configs['operation']['close_position'],
-            'order_contracts' => $configs['operation']['order_contracts'],
-            'max_contracts' => $configs['operation']['max_contracts'],
-            'max_orders' => $configs['operation']['max_orders'],
-            'timeout_order' => $configs['operation']['timeout_order'],
-        ]), $request, $db);
-        $monitor->setDebug(true);
+            $monitor = new Monitor(new ConfigMonitor([
+                'symbol' => $configs['operation']['symbol'],
+                'side' => $configs['operation']['side'],
+                'profit' => $configs['operation']['profit'],
+                'leverage' => $configs['operation']['leverage'],
+                'scalper' => $configs['operation']['scalper'],
+                'loss_position' => $configs['operation']['loss_position'],
+                'close_position' => $configs['operation']['close_position'],
+                'order_contracts' => $configs['operation']['order_contracts'],
+                'max_contracts' => $configs['operation']['max_contracts'],
+                'max_orders' => $configs['operation']['max_orders'],
+                'timeout_order' => $configs['operation']['timeout_order'],
+            ]), $request, $db);
+            $monitor->setDebug(true);
 
-        $db->exec(sprintf("UPDATE monitor SET execution = '%s'", date('Y-m-d H:i:s')));
+            if ($monitor->isMonitoring()) {
+                printf(
+                    "%s - Monitoring %s[%s]\n",
+                    date('Y-m-d H:i:s'),
+                    $monitor->textColor('yellow', $configs['operation']['symbol']),
+                    $monitor->textColor('magenta', $configs['operation']['leverage'].'x')
+                );
 
-        echo $monitor->textColor('white', str_repeat('-', 60).PHP_EOL);
+                $monitor->init();
+            } else {
+                printf(
+                    "%s - %s %s...\n",
+                    date('Y-m-d H:i:s'),
+                    $monitor->textColor('blue', "Waiting funding"),
+                    $monitor->textColor('yellow', $configs['operation']['symbol'])
+                );
 
-        if ($monitor->isMonitoring()) {
-            printf(
-                "[%s] - Monitoring %s[%s]\n",
-                date('Y-m-d H:i:s'),
-                $monitor->textColor('yellow', $configs['operation']['symbol']),
-                $monitor->textColor('magenta', $configs['operation']['leverage'].'x')
+                sleep(10);
+            }
+
+            $db->exec(
+                sprintf(
+                    "INSERT or REPLACE INTO monitor (execution, symbol, open_symbols) VALUES ('%s', '%s', '%s')",
+                    date('Y-m-d H:i:s'),
+                    $configs['operation']['symbol'],
+                    $monitor->getOpenSymbols()
+                )
             );
 
-            $monitor->init();
-        } else {
+            $db->close();
+            unset($db);
+            unset($monitor);
+        } catch (InvalidArgumentException $e) {
             printf(
-                "[%s] - %s %s...\n",
+                "%s - Timeout... %s\n",
                 date('Y-m-d H:i:s'),
-                $monitor->textColor('blue', "Waiting funding"),
-                $monitor->textColor('yellow', $configs['operation']['symbol'])
+                $monitor->textColor('red', $configs['operation']['symbol'])
             );
-
-            sleep(10);
         }
-
-        $db->close();
-        unset($db);
     });
 }
 
