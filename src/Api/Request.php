@@ -122,7 +122,8 @@ final class Request
         $response = [
             'status' => curl_getinfo($this->ch, CURLINFO_HTTP_CODE),
             'response' => json_decode($header['body'], true),
-            'rate_limit' => $this->rateLimite($header['header'])
+            'orders' => $this->orders($header['header']),
+            'rate_limit' => $this->rateLimit($header['header'])
         ];
 
         return $response;
@@ -136,7 +137,20 @@ final class Request
         return $header;
     }
 
-    private function rateLimite(string $header): array
+    private function orders(string $header): array
+    {
+        preg_match_all('/X\-MBX\-ORDER\-COUNT\-(.*[^\s])/i', $header, $temp);
+        $orders = [];
+
+        foreach ($temp[1] as $value) {
+            list($key, $value) = explode(': ', $value);
+            $orders[$key] = $value;
+        }
+
+        return $orders;
+    }
+
+    private function rateLimit(string $header): array
     {
         preg_match_all('/X\-MBX\-USED\-WEIGHT\-(.*[^\s])/i', $header, $temp);
         $rate_limit = [];
