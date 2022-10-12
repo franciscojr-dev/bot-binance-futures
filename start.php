@@ -17,15 +17,18 @@ $loop->addPeriodicTimer(10, function () use (&$started) {
     $now = new DateTime('now');
     $diff = $now->format('U') - $last_execution->format('U');
 
-    if (!$started/* || $diff >= 300*/) {
+    if (!$started || $diff >= 365) {
         if (!$started) {
             $started = true;
+
             echo "Starting...\n";
+
+            shell_exec('/usr/bin/php monitor.php > monitor.log&');
         } else {
             echo "Restarting...\n";
-        }
 
-        shell_exec('/usr/bin/php monitor.php > monitor.log&');
+            shell_exec('service bot_binance_main restart');
+        }
     }
 
     $db->close();

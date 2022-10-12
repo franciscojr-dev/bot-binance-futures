@@ -1,7 +1,7 @@
 {
     "name": "franciscojr-dev/bot-binance-futures",
     "description": "Bot of trading from Binance",
-    "version": "1.5.0",
+    "version": "1.6.0",
     "type": "project",
     "license": "proprietary",
     "authors": [
