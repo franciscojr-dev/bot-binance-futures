@@ -7,12 +7,15 @@ final class Request
     const VERSION = '1.0.0';
     const URL_MAIN = 'https://fapi.binance.com';
     const URL_TESTNET = 'https://testnet.binancefuture.com';
+    const URL_SPOT = 'https://api.binance.com';
     const PATH = '/fapi/v1';
+    const PATH_SAVING = '/sapi/v1';
 
     private $timeout = 5;
     private $configs = null;
     private $ch = null;
     private $url_base = null;
+    private $enableSaving = false;
 
     public function __construct(Configurations $configs)
     {
@@ -37,10 +40,10 @@ final class Request
     {
         switch ($this->configs->getMode()) {
             case 'test':
-                $url = Request::URL_TESTNET;
+                $url = self::URL_TESTNET;
                 break;
             case 'main':
-                $url = Request::URL_MAIN;
+                $url = self::URL_MAIN;
                 break;
             default:
                 $url = '';
@@ -51,11 +54,12 @@ final class Request
 
     private function request(string $verb, string $path, array $data): array
     {
-        $path = sprintf('%s/%s', Request::PATH, preg_replace('/^[\/]+/', '', $path));
+        $url = $this->enableSaving ? self::URL_SPOT : $this->url_base;
+        $pathMain = $this->enableSaving ? self::PATH_SAVING : self::PATH;
+        $path = sprintf('%s/%s', $pathMain, preg_replace('/^[\/]+/', '', $path));
         $this->setOptions([
-            'url' => sprintf('%s%s', $this->url_base, $path),
+            'url' => sprintf('%s%s', $url, $path),
             'path' => $path,
-            //'data' => json_encode($data),
             'data' => $data,
             'verb' => $verb
         ]);
@@ -73,17 +77,16 @@ final class Request
 
         curl_setopt_array($this->ch, [
             CURLOPT_URL => $vars['url'],
-            CURLOPT_USERAGENT => 'iBotMex/'.Request::VERSION,
+            CURLOPT_USERAGENT => 'iBotMex/'.self::VERSION,
             CURLOPT_HEADER => true,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_CUSTOMREQUEST => $vars['verb'],
             CURLOPT_POST => true,
-            // CURLOPT_POSTFIELDS => $vars['data'],
             CURLOPT_HTTPHEADER => $this->headers($vars)
         ]);
     }
 
-    private function headers(array $vars): array
+    private function headers(array $vars = []): array
     {
         return [
             "Content-Type: application/json; charset=utf-8",
@@ -171,5 +174,10 @@ final class Request
     public function setTimeout(int $time): void
     {
         $this->timeout = $time;
+    }
+
+    public function setEnableSaving(bool $enableSaving): void
+    {
+        $this->enableSaving = $enableSaving;
     }
 }

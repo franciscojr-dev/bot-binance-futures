@@ -20,15 +20,20 @@ echo "MONITOR SYNC STARTED...\n";
 echo "------------------------\n";
 
 foreach ($serverList as $host => $enable) {
+    $attemps = 0;
+
     if ($enable) {
         echo "SYNC: {$host}\n";
 
-        $connection = ssh2_connect($host, 22);
+        do {
+            $connection = @ssh2_connect($host, 22);
 
-        if (!$connection) {
-            echo "CONNECTION FAIL!\n";
-            continue;
-        }
+            if (!$connection) {
+                echo "CONNECTION FAIL!\n";
+            }
+
+            $attemps += 1;
+        } while($attemps < 3);
 
         ssh2_auth_password($connection, 'root', '4h9aXGN8DN@vfgk');
 
