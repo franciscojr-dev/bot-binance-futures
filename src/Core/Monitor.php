@@ -20,6 +20,9 @@ final class Monitor
     private $marginAccount = 0;
     private $marginSymbol = 0;
     private $pnlHour = 0;
+    private $enableBalanceOut = 0;
+    private $percentBalanceOut = 0;
+    private $fromBalanceOut = 0;
     private $priceChangePercent = 0;
     private $maxTry = 0;
     private $multipleOrder = 0;
@@ -35,6 +38,7 @@ final class Monitor
     private $safePosition = false;
     private $orderReverse = false;
     private $maxOrders = 1;
+    private $maxOrdersGeneral = 30;
     private $baseOrderAmount = 5;
     private $timeoutOrder = 10;
     private $multipleTimeoutOrder = 5;
@@ -83,6 +87,9 @@ final class Monitor
         $this->marginAccount = $config['monitor']['margin_account'] ?? 0;
         $this->marginSymbol = $config['monitor']['margin_symbol'] ?? 0;
         $this->pnlHour = $config['monitor']['pnl_hour'] ?? 0;
+        $this->enableBalanceOut = $config['monitor']['enable_balance_out'] ?? 0;
+        $this->percentBalanceOut = $config['monitor']['percent_balance_out'] ?? 0;
+        $this->fromBalanceOut = $config['monitor']['from_balance_out'] ?? 0;
         $this->priceChangePercent = $config['monitor']['price_change_percent'] ?? 0;
         $this->maxTry = $config['monitor']['max_try'] ?? 0;
         $this->multipleOrder = $config['monitor']['multiple_order'] ?? 0;
@@ -98,6 +105,7 @@ final class Monitor
         $this->safePosition = (bool) ($config['monitor']['safe_position'] ?? false);
         $this->orderReverse = (bool) ($config['monitor']['order_reverse'] ?? false);
         $this->maxOrders = $config['monitor']['max_orders'] ?? 1;
+        $this->maxOrdersGeneral = $config['monitor']['max_orders_general'] ?? 30;
         $this->baseOrderAmount = $config['monitor']['base_order_amount'] ?? 5;
         $this->timeoutOrder = $config['monitor']['timeout_order'] ?? 10;
         $this->multipleTimeoutOrder = $config['monitor']['multiple_timeout_order'] ?? 5;
@@ -193,7 +201,48 @@ final class Monitor
             }
         }
 
-        if ((float) $totalMaintMargin >= $this->calcPercentage($totalMarginBalance, $this->marginAccount)) {
+        $checkMargin = (float) $totalMaintMargin >= $this->calcPercentage($totalMarginBalance, $this->marginAccount);
+
+        if ((int) date('i') % 55 === 0 && $accountBalance) {
+            $this->executeSql(
+                sprintf(
+                    "UPDATE account_balance SET withdraw = %s, updated_at = '%s' WHERE id = %s",
+                    '0',
+                    date('Y-m-d H:i:s'),
+                    $accountBalance['id']
+                )
+            );
+        }
+
+        if ((int) date('i') % 60 === 0 && !$checkMargin) {
+            $accountBalance = $this->getAccountBalance();
+            $account = $this->getAccountInformation();
+
+            if (($account['status'] ?? 0) === 200 && $accountBalance) {
+                $variationDaily = bcsub((string) $totalWalletBalance, (string) $accountBalance['value'], 8);
+
+                if ($this->enableBalanceOut && $variationDaily >= $this->fromBalanceOut) {
+                    $percentOut = bcdiv((string) $this->percentBalanceOut, '100', 5);
+                    $balanceOut = bcmul((string) $variationDaily, $percentOut, 2);
+                    $checkTransfer = $this->isPrintMessage() && rand(0, 1);
+
+                    if (!$accountBalance['withdraw'] && $checkTransfer && $this->transferBalance((float) $balanceOut)) {
+                        echo $this->textColor('green', "Withdraw of gains {$balanceOut} USDT\n");
+
+                        $this->executeSql(
+                            sprintf(
+                                "UPDATE account_balance SET withdraw = %s, updated_at = '%s' WHERE id = %s",
+                                '1',
+                                date('Y-m-d H:i:s'),
+                                $accountBalance['id']
+                            )
+                        );
+                    }
+                }
+            }
+        }
+
+        if ($checkMargin) {
             if ($this->isPrintMessage()) {
                 $output = $this->textColor('red', "Maximum margin used [Account]\n");
 
@@ -234,7 +283,7 @@ final class Monitor
     }
 
     private function isPrintMessage(): bool {
-        return (int) date('s') % 15 === 0;
+        return (int) date('s') % 12 === 0;
     }
 
     private function getIntervals(): int
@@ -373,7 +422,7 @@ final class Monitor
                     continue;
                 }*/
 
-                if ($this->isTimeBoxOrder((int) $order['time'], $closePosition)) {
+                if (!$closePosition && $this->isTimeBoxOrder((int) $order['time'], $closePosition)) {
                     $output = sprintf($this->textColor('blue', "%s Order canceled\n"), $order['orderId']);
 
                     if ($this->debug) {
@@ -528,6 +577,7 @@ final class Monitor
         $leverage = (int) $position['leverage'];
         $symbol = $position['symbol'];
         $positionSide = $position['positionSide'];
+        $marginType = $position['marginType'];
         $margin = $notional / $leverage;
         $profit = $this->getPnlPercentGain($leverage) / $leverage;
         $diffPriceGain = $this->calcPercentage($entryPrice, $profit);
@@ -537,7 +587,6 @@ final class Monitor
         $percentStopHedge = $this->getPnlPercentGain($leverage) * 2;
         $pnlPositionPercentLossHedge = $this->calcPercentage($margin, ($percentStopHedge + $this->getPnlPercentLoss($leverage)));
         $pnlPositionPercentGainProtect = $this->calcPercentage($margin, ($this->getPnlPercentGain($leverage) / $this->coveragePointDividerGain));
-
         $marginIndividual = $this->marginIndividualMin;
         $position['positionAmt'] = abs($position['positionAmt']);
         $positionAmtOrigin = $position['positionAmt'];
@@ -556,6 +605,10 @@ final class Monitor
 
         if ($this->hedgeMode && $positionSide == 'BOTH') {
             return false;
+        }
+
+        if (strtoupper($marginType) !== 'CROSSED') {
+            $this->marginType('CROSSED');
         }
 
         if ($this->walletBalance) {
@@ -1461,6 +1514,16 @@ final class Monitor
                     echo $output;
                 }
 
+                if ($this->getTotalOpenOrders() >= $this->maxOrdersGeneral) {
+                    $output = $this->textColor('cyan', "Maximum open orders [ALL]\n");
+
+                    if ($this->debug) {
+                        echo $output;
+                    }
+
+                    return;
+                }
+
                 $this->orderProfit($pricesOperation['origin']['param'], $pricesOperation['origin']['price']);
 
                 if ($this->orderReverse) {
@@ -1676,6 +1739,33 @@ final class Monitor
         }
 
         return $order;
+    }
+
+    private function transferBalance(float $amount, bool $input = false): bool
+    {
+        $params_request = [
+            'asset' => 'USDT',
+            'amount' => $amount,
+            'type' => $input ? 1 : 2
+        ];
+
+        $this->request->setEnableSaving(true);
+        $response = $this->request->post('/futures/transfer', $params_request);
+        $this->request->setEnableSaving(false);
+
+        return $response['status'] === 200;
+    }
+
+    public function marginType(string $type = 'ISOLATED'): bool
+    {
+        $params_request = [
+            'symbol' => $this->configs->getSymbol(),
+            'marginType' => $type
+        ];
+
+        $response = $this->request->post('/marginType', $params_request);
+
+        return $response['status'] === 200;
     }
 
     private function getStaticsTicker(): array
