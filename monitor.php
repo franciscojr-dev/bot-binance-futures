@@ -68,9 +68,9 @@ $request = new Request(new ConfigRequest([
 $loop = Loop::get();
 
 foreach ($symbols as $symbol) {
-    $configs = parse_ini_file($symbol, true, INI_SCANNER_RAW);
+    $loop->addPeriodicTimer($runDelay, function () use ($request, $symbol) {
+        $configs = parse_ini_file($symbol, true, INI_SCANNER_RAW);
 
-    $loop->addPeriodicTimer($runDelay, function () use ($request, $configs) {
         try {
             $db = new DB(__DIR__ . '/db/bot.db');
             $db->busyTimeout(5e4);

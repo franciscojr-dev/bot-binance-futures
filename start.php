@@ -12,7 +12,7 @@ $loop->addPeriodicTimer(10, function () use (&$started) {
     $db = new DB(__DIR__ . '/db/bot.db');
     $db->busyTimeout(5e4);
 
-    $last_execution = $db->querySingle('SELECT execution FROM monitor');
+    $last_execution = $db->querySingle('SELECT execution FROM monitor ORDER BY execution DESC');
     $last_execution = new \Datetime($last_execution);
     $now = new DateTime('now');
     $diff = $now->format('U') - $last_execution->format('U');
