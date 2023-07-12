@@ -128,6 +128,12 @@ foreach ($symbols as $symbol) {
                 date('Y-m-d H:i:s'),
                 $monitor->textColor('red', $configs['operation']['symbol'])
             );
+        } catch (Exception $e) {
+            printf(
+                "%s - Error: %s\n",
+                date('Y-m-d H:i:s'),
+                $monitor->textColor('red', $e->getMessage())
+            );
         }
     });
 }
