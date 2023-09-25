@@ -55,8 +55,13 @@ final class Request
     private function request(string $verb, string $path, array $data): array
     {
         $url = $this->enableSaving ? self::URL_SPOT : $this->url_base;
-        $pathMain = $this->enableSaving ? self::PATH_SAVING : self::PATH;
+        $pathMain = $this->enableSaving ? self::PATH_SAVING : ($data['path'] ?? self::PATH);
         $path = sprintf('%s/%s', $pathMain, preg_replace('/^[\/]+/', '', $path));
+
+        if (isset($data['path'])) {
+            unset($data['path']);
+        }
+
         $this->setOptions([
             'url' => sprintf('%s%s', $url, $path),
             'path' => $path,
