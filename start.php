@@ -23,6 +23,8 @@ $loop->addPeriodicTimer(10, function () use (&$started) {
 
             echo "Starting...\n";
 
+            shell_exec('/usr/bin/php symbol_live.php > monitor.log&');
+
             shell_exec('/usr/bin/php monitor.php > monitor.log&');
         } else {
             echo "Restarting...\n";
