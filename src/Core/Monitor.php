@@ -32,6 +32,7 @@ final class Monitor
     private $closeLossPositionSoft = false;
     private $closeGainSoft = false;
     private $stopPreventive = false;
+    private $stopSma = false;
     private $checkMarginSafe = false;
     private $hedgePositionLong = true;
     private $hedgePositionShort = true;
@@ -51,6 +52,7 @@ final class Monitor
     private $periodSma1 = 9;
     private $periodSma2 = 25;
     private $periodSma3 = 48;
+    private $periodSma4 = 144;
     private $useSma = false;
     private $candleConsecutive = 1;
     private $candleClosed = false;
@@ -113,6 +115,7 @@ final class Monitor
         $this->closeLossPositionSoft = (bool) ($config['monitor']['close_loss_position_soft'] ?? false);
         $this->closeGainSoft = (bool) ($config['monitor']['close_gain_soft'] ?? false);
         $this->stopPreventive = (bool) ($config['monitor']['stop_preventive'] ?? false);
+        $this->stopSma = (bool) ($config['monitor']['stop_sma'] ?? false);
         $this->checkMarginSafe = (bool) ($config['monitor']['check_margin_safe'] ?? false);
         $this->hedgePositionLong = (bool) ($config['monitor']['hedge_position_long'] ?? false);
         $this->hedgePositionShort = (bool) ($config['monitor']['hedge_position_short'] ?? false);
@@ -132,6 +135,7 @@ final class Monitor
         $this->periodSma1 = (int) ($config['monitor']['period_sma_1'] ?? 9);
         $this->periodSma2 = (int) ($config['monitor']['period_sma_2'] ?? 25);
         $this->periodSma3 = (int) ($config['monitor']['period_sma_3'] ?? 48);
+        $this->periodSma4 = (int) ($config['monitor']['period_sma_4'] ?? 144);
         $this->useSma = (bool) ($config['monitor']['use_sma'] ?? false);
         $this->candleConsecutive = (int) ($config['monitor']['candle_consecutive'] ?? 1);
         $this->candleClosed = (bool) ($config['monitor']['candle_closed'] ?? false);
@@ -733,7 +737,13 @@ final class Monitor
                 $stopPreventive = true;
             }
 
-            if ($markPrice > $priceGain && $unRealizedProfit >= $pnlPositionPercentGainProtect && !$stopPreventive && $unRealizedProfit < $pnlPositionPercentGain) {
+            if (
+                (
+                    $markPrice > $priceGain && $unRealizedProfit >= $pnlPositionPercentGainProtect && !$stopPreventive && $unRealizedProfit < $pnlPositionPercentGain
+                ) || (
+                    $stopPreventive = $this->stopSma && $this->useSma && $this->hasPosition && $operation['enable'] && $operation['stop_sma'] && $operation['type'] === 'buy'
+                )
+            ) {
                 $avgStopGain = bcadd((string) $entryPrice, (string) $markPrice, 8);
                 $avgStopGain = bcdiv((string) $avgStopGain, '2', 8);
                 $priceProtect = $this->formatDecimal((float) $bookPriceBuy, (float) $avgStopGain);
@@ -945,7 +955,13 @@ final class Monitor
                 $stopPreventive = true;
             }
 
-            if ($markPrice < $priceGain && $unRealizedProfit >= $pnlPositionPercentGainProtect && !$stopPreventive && $unRealizedProfit < $pnlPositionPercentGain) {
+            if (
+                (
+                    $markPrice < $priceGain && $unRealizedProfit >= $pnlPositionPercentGainProtect && !$stopPreventive && $unRealizedProfit < $pnlPositionPercentGain
+                ) || (
+                    $stopPreventive = $this->stopSma && $this->useSma && $this->hasPosition && $operation['enable'] && $operation['stop_sma'] && $operation['type'] === 'sell'
+                )
+            ) {
                 $avgStopGain = bcadd((string) $entryPrice, (string) $markPrice, 8);
                 $avgStopGain = bcdiv((string) $avgStopGain, '2', 8);
                 $priceProtect = $this->formatDecimal((float) $bookPriceSell, (float) $avgStopGain);
@@ -1310,7 +1326,9 @@ final class Monitor
 
         if ($this->useWs) {
             $pair = !$btc ? $this->configs->getSymbol() : 'BTCUSDT';
-            $results = $this->db->query("SELECT * FROM symbol WHERE name = '{$pair}' order by open_at desc limit {$limit};");
+
+            $limitSql = $this->candleClosed ? "1, {$limit}" : $limit;
+            $results = $this->db->query("SELECT * FROM symbol WHERE name = '{$pair}' order by open_at desc limit {$limitSql};");
 
             if (!$results) {
                 return [];
@@ -1406,6 +1424,7 @@ final class Monitor
         $priceSma1 = $this->calculateSMA($listPrices, $this->periodSma1);
         $priceSma2 = $this->calculateSMA($listPrices, $this->periodSma2);
         $priceSma3 = $this->calculateSMA($listPrices, $this->periodSma3);
+        $priceSma4 = $this->calculateSMA($listPrices, $this->periodSma4);
 
         $key = Position::arrayKeyLast($candles);
 
@@ -1426,6 +1445,7 @@ final class Monitor
             'price_sma_1' => $priceSma1,
             'price_sma_2' => $priceSma2,
             'price_sma_3' => $priceSma3,
+            'price_sma_4' => $priceSma4,
         ], $btc);
     }
 
@@ -1468,12 +1488,17 @@ final class Monitor
         }
 
         $type_sma = '';
+        $stop_sma = false;
 
         if ($params['close'] > $params['price_sma_1']
             && $params['close'] > $params['price_sma_2']
             && $params['close'] > $params['price_sma_3']
         ) {
             $type_sma = 'buy';
+
+            if ($params['close'] > $params['price_sma_4']) {
+                $stop_sma = $this->useSma;
+            }
         }
 
         if ($params['close'] < $params['price_sma_1']
@@ -1481,6 +1506,10 @@ final class Monitor
             && $params['close'] < $params['price_sma_3']
         ) {
             $type_sma = 'sell';
+
+            if ($params['close'] < $params['price_sma_4']) {
+                $stop_sma = $this->useSma;
+            }
         }
 
         if ($open_order && !$this->useSma) {
@@ -1489,14 +1518,15 @@ final class Monitor
             }
         }
 
-        if ($this->useSma && $type_sma) {
+        if ($this->useSma) {
             $type_order = $type_sma;
-            $open_order = true;
+            $open_order = $type_sma ? true : false;
         }
 
         return [
             'type' => $type_order,
-            'enable' => $open_order
+            'enable' => $open_order,
+            'stop_sma' => $stop_sma
         ];
     }
 
