@@ -34,7 +34,7 @@ trait Position
         return Position::valueMarge($type, $value, $marge);
     }
 
-    private static function getTotalDecimal(float $value): int
+    public static function getTotalDecimal(float $value): int
     {
         preg_match('/\.(?<decimal>[0-9]+)/', $value, $numbers);
 
