@@ -33,6 +33,7 @@ final class Monitor
     private $closeGainSoft = false;
     private $stopPreventive = false;
     private $stopSma = false;
+    private $hedgeSma = false;
     private $checkMarginSafe = false;
     private $hedgePositionLong = true;
     private $hedgePositionShort = true;
@@ -116,6 +117,7 @@ final class Monitor
         $this->closeGainSoft = (bool) ($config['monitor']['close_gain_soft'] ?? false);
         $this->stopPreventive = (bool) ($config['monitor']['stop_preventive'] ?? false);
         $this->stopSma = (bool) ($config['monitor']['stop_sma'] ?? false);
+        $this->hedgeSma = (bool) ($config['monitor']['hedge_sma'] ?? false);
         $this->checkMarginSafe = (bool) ($config['monitor']['check_margin_safe'] ?? false);
         $this->hedgePositionLong = (bool) ($config['monitor']['hedge_position_long'] ?? false);
         $this->hedgePositionShort = (bool) ($config['monitor']['hedge_position_short'] ?? false);
@@ -822,10 +824,10 @@ final class Monitor
                     $stopPreventive = true;
                 }
 
-                if ($this->closeLossPosition || $stopPreventive) {
+                if ($this->closeLossPosition || ($stopPreventive && $markPrice > $priceLoss && !$this->hedgeSma)) {
                     $force = true;
                 } else {
-                    if ($this->hedgePositionShort) {
+                    if ($this->hedgePositionShort || ($stopPreventive && $this->hedgeSma)) {
                         $positionHedge = $this->getPostionBySide('LONG');
                         $positionAmtHedge = abs($positionHedge['positionAmt']);
                         $diffPriceClose = $this->calcPercentage($markPrice, ($profit * $this->multiplePercentGain));
@@ -834,26 +836,30 @@ final class Monitor
                         $diffPriceOrder = abs(Position::percentage($bookPriceBuy, $prices['price_sell']));
                         $closed = false;
 
-                        if ($this->softHedge) {
-                            if ($operation['enable']) {
-                                if ($operation['type'] != 'buy') {
+                        if (!$this->hedgeSma) {
+                            if ($this->softHedge) {
+                                if ($operation['enable']) {
+                                    if ($operation['type'] != 'buy') {
+                                        $hasPriceOperation = false;
+                                    }
+                                } else {
                                     $hasPriceOperation = false;
                                 }
+
+                                if ($hasPriceOperation && $diffPriceOrder <= ($profit * $this->multiplePercentGain)) {
+                                    $hasPriceOperation = false;
+                                }
+
+                                if (!$hasPriceOperation) {
+                                    $priceClose = 0;
+                                }
                             } else {
-                                $hasPriceOperation = false;
-                            }
-
-                            if ($hasPriceOperation && $diffPriceOrder <= ($profit * $this->multiplePercentGain)) {
-                                $hasPriceOperation = false;
-                            }
-
-                            if (!$hasPriceOperation) {
-                                $priceClose = 0;
+                                if (!$this->closeLossPositionSoft) {
+                                    $force = true;
+                                }
                             }
                         } else {
-                            if (!$this->closeLossPositionSoft) {
-                                $force = true;
-                            }
+                            $force = true;
                         }
 
                         if ($positionAmtHedge && $priceClose) {
@@ -1040,10 +1046,10 @@ final class Monitor
                     $stopPreventive = true;
                 }
 
-                if ($this->closeLossPosition || $stopPreventive) {
+                if ($this->closeLossPosition || ($stopPreventive && $markPrice < $priceLoss && !$this->hedgeSma)) {
                     $force = true;
                 } else {
-                    if ($this->hedgePositionLong) {
+                    if ($this->hedgePositionLong || ($stopPreventive && $this->hedgeSma)) {
                         $positionHedge = $this->getPostionBySide('SHORT');
                         $positionAmtHedge = abs($positionHedge['positionAmt']);
                         $diffPriceClose = $this->calcPercentage($markPrice, ($profit * $this->multiplePercentGain));
@@ -1052,26 +1058,30 @@ final class Monitor
                         $diffPriceOrder = abs(Position::percentage($bookPriceBuy, $prices['price_buy']));
                         $closed = false;
 
-                        if ($this->softHedge) {
-                            if ($operation['enable']) {
-                                if ($operation['type'] != 'sell') {
+                        if (!$this->hedgeSma) {
+                            if ($this->softHedge) {
+                                if ($operation['enable']) {
+                                    if ($operation['type'] != 'sell') {
+                                        $hasPriceOperation = false;
+                                    }
+                                } else {
                                     $hasPriceOperation = false;
                                 }
+
+                                if ($hasPriceOperation && $diffPriceOrder <= ($profit * $this->multiplePercentGain)) {
+                                    $hasPriceOperation = false;
+                                }
+
+                                if (!$hasPriceOperation) {
+                                    $priceClose = 0;
+                                }
                             } else {
-                                $hasPriceOperation = false;
-                            }
-
-                            if ($hasPriceOperation && $diffPriceOrder <= ($profit * $this->multiplePercentGain)) {
-                                $hasPriceOperation = false;
-                            }
-
-                            if (!$hasPriceOperation) {
-                                $priceClose = 0;
+                                if (!$this->closeLossPositionSoft) {
+                                    $force = true;
+                                }
                             }
                         } else {
-                            if (!$this->closeLossPositionSoft) {
-                                $force = true;
-                            }
+                            $force = true;
                         }
 
                         if ($positionAmtHedge && $priceClose) {
@@ -2125,6 +2135,14 @@ final class Monitor
         if ($params['force'] ?? false) {
             $params_request['type'] = 'MARKET';
         } else {
+            $candles = $this->getCandles(false, 2)['response'] ?? [];
+            $params['price'] = number_format(
+                (float) $params['price'],
+                Position::getTotalDecimal((float) $candles[0]['close']),
+                '.',
+                ''
+            );
+
             if (!$stop) {
                 $params_request['price'] = $params['price'];
                 $params_request['timeInForce'] = 'GTC';
