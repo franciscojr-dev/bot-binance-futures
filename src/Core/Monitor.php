@@ -17,6 +17,7 @@ final class Monitor
     private $debug = false;
     private $walletBalance = 0.00;
     private $operations = false;
+    private $debugChecks = false;
     private $useWs = false;
     private $marginAccount = 0;
     private $marginSymbol = 0;
@@ -33,6 +34,7 @@ final class Monitor
     private $closeGainSoft = false;
     private $stopPreventive = false;
     private $stopSma = false;
+    private $stopPreventiveSma = false;
     private $hedgeSma = false;
     private $checkMarginSafe = false;
     private $hedgePositionLong = true;
@@ -42,6 +44,7 @@ final class Monitor
     private $softHedge = false;
     private $safePosition = false;
     private $orderReverse = false;
+    private $fixedProfitOrder = false;
     private $maxOrders = 1;
     private $maxOrdersGeneral = 30;
     private $baseOrderAmount = 5;
@@ -55,6 +58,8 @@ final class Monitor
     private $periodSma3 = 48;
     private $periodSma4 = 144;
     private $useSma = false;
+    private $useSmaDistortion = false;
+    private $smaDistortionPercent = 0.10;
     private $candleConsecutive = 1;
     private $candleClosed = false;
     private $distanceBook = 5;
@@ -101,6 +106,7 @@ final class Monitor
         }
 
         $this->operationDisable = (bool) !($config['monitor']['operations'] ?? true);
+        $this->debugChecks = (bool) ($config['monitor']['debug_checks'] ?? false);
         $this->useWs = (bool) !($config['monitor']['use_ws'] ?? true);
         $this->marginAccount = (float) ($config['monitor']['margin_account'] ?? 0);
         $this->marginSymbol = (float) ($config['monitor']['margin_symbol'] ?? 0);
@@ -117,6 +123,7 @@ final class Monitor
         $this->closeGainSoft = (bool) ($config['monitor']['close_gain_soft'] ?? false);
         $this->stopPreventive = (bool) ($config['monitor']['stop_preventive'] ?? false);
         $this->stopSma = (bool) ($config['monitor']['stop_sma'] ?? false);
+        $this->stopPreventiveSma = (bool) ($config['monitor']['stop_preventive_sma'] ?? false);
         $this->hedgeSma = (bool) ($config['monitor']['hedge_sma'] ?? false);
         $this->checkMarginSafe = (bool) ($config['monitor']['check_margin_safe'] ?? false);
         $this->hedgePositionLong = (bool) ($config['monitor']['hedge_position_long'] ?? false);
@@ -126,6 +133,7 @@ final class Monitor
         $this->softHedge = (bool) ($config['monitor']['soft_hedge'] ?? false);
         $this->safePosition = (bool) ($config['monitor']['safe_position'] ?? false);
         $this->orderReverse = (bool) ($config['monitor']['order_reverse'] ?? false);
+        $this->fixedProfitOrder = (bool) ($config['monitor']['fixed_profit_order'] ?? false);
         $this->maxOrders = (int) ($config['monitor']['max_orders'] ?? 1);
         $this->maxOrdersGeneral = (int) ($config['monitor']['max_orders_general'] ?? 30);
         $this->baseOrderAmount = (float) ($config['monitor']['base_order_amount'] ?? 5);
@@ -139,6 +147,8 @@ final class Monitor
         $this->periodSma3 = (int) ($config['monitor']['period_sma_3'] ?? 48);
         $this->periodSma4 = (int) ($config['monitor']['period_sma_4'] ?? 144);
         $this->useSma = (bool) ($config['monitor']['use_sma'] ?? false);
+        $this->useSmaDistortion = (bool) ($config['monitor']['use_sma_distortion'] ?? false);
+        $this->smaDistortionPercent = (float) ($config['monitor']['sma_distortion_percent'] ?? 0);
         $this->candleConsecutive = (int) ($config['monitor']['candle_consecutive'] ?? 1);
         $this->candleClosed = (bool) ($config['monitor']['candle_closed'] ?? false);
         $this->distanceBook = (int) ($config['monitor']['distance_book'] ?? 5);
@@ -275,7 +285,7 @@ final class Monitor
             if ($this->isPrintMessage()) {
                 $output = $this->textColor('red', "Maximum margin used [Account]\n");
 
-                if ($this->debug) {
+                if ($this->debug && $this->debugChecks) {
                     echo $output;
                 }
             }
@@ -287,7 +297,7 @@ final class Monitor
             if ($this->isPrintMessage()) {
                 $output = $this->textColor('red', "maximum pnl per hour {$pnlHour} USDT\n");
 
-                if ($this->debug) {
+                if ($this->debug && $this->debugChecks) {
                     echo $output;
                 }
             }
@@ -699,7 +709,7 @@ final class Monitor
             if ($operation['enable']) {
                 $output = $this->textColor('red', "Maximum margin used {$positionSide} [{$symbol}]\n");
 
-                if ($this->debug) {
+                if ($this->debug && $this->debugChecks) {
                     echo $output;
                 }
             }
@@ -717,7 +727,7 @@ final class Monitor
             }
         }
 
-        $lastCandleData = $this->getLastCandleData();
+        $lastCandleData = $this->stopPreventive ? $this->getLastCandleData() : ['enable' => false, 'type' => ''];
         $checkMarginSafe = $this->checkMarginSafe && ($margin >= $this->marginIndividualMin || abs($unRealizedProfit) >= $this->marginIndividualMin);
         $bookPriceBuy = $priceBook['buy'];
         $bookPriceSell = $priceBook['sell'];
@@ -732,6 +742,7 @@ final class Monitor
             $result = '';
             $stopPreventive = false;
             $stopProtectGain = false;
+            $fixedProfitOrder = false;
 
             if ($this->stopPreventive && $lastCandleData['enable']
                 && $lastCandleData['type'] === 'buy' && $checkMarginSafe
@@ -751,16 +762,27 @@ final class Monitor
                 $priceProtect = $this->formatDecimal((float) $bookPriceBuy, (float) $avgStopGain);
                 $stopProtectGain = true;
                 $stop = true;
+
+                if (!$this->stopSma && $this->stopPreventiveSma && $operation['stop_sma'] && $unRealizedProfit < 0) {
+                    $stopPreventive = false;
+                }
+            } else {
+                $fixedProfitOrder = $this->fixedProfitOrder;
             }
 
-            if (($markPrice < $priceGain || $stopPreventive || $stopProtectGain) && $unRealizedProfit > $this->amountGainMin) {
+            if (($markPrice < $priceGain || $stopPreventive || $stopProtectGain || $fixedProfitOrder) && $unRealizedProfit > $this->amountGainMin) {
                 $msg = "Maximum %s [%.4f] - (%.4f < %.4f) | %.4f USDT - %s [%s]\n";
+
+                if ($fixedProfitOrder) {
+                    $msg = "Fixed order %s [%.4f] - (%.4f < %.4f) | %.4f USDT - %s [%s]\n";
+                }
+
                 $this->lossSell = false;
                 $result = $this->textColor('green', 'gain');
                 $priceClose = $stopProtectGain ? $priceProtect : $priceGain;
                 $force = $stopProtectGain ? false : !$this->closeGainSoft;
 
-                if (!$this->softHedge && !$stopProtectGain) {
+                if (!$this->softHedge && !$stopProtectGain && !$this->useSma) {
                     $positionHedge = $this->getPostionBySide('LONG');
                     $unRealizedProfitHedge = abs($positionHedge['unRealizedProfit']);
 
@@ -908,7 +930,7 @@ final class Monitor
                         $output = $this->textColor('red', "Maximum use of margin in hedge {$positionSide} [{$symbol}]\n");
                         $this->lossBuyMaxMargem = true;
 
-                        if ($this->debug) {
+                        if ($this->debug && $this->debugChecks) {
                             echo $output;
                         }
 
@@ -954,6 +976,7 @@ final class Monitor
             $priceClose = 0;
             $stopPreventive = false;
             $stopProtectGain = false;
+            $fixedProfitOrder = false;
 
             if ($this->stopPreventive && $lastCandleData['enable']
                 && $lastCandleData['type'] === 'sell' && $checkMarginSafe
@@ -973,16 +996,27 @@ final class Monitor
                 $priceProtect = $this->formatDecimal((float) $bookPriceSell, (float) $avgStopGain);
                 $stopProtectGain = true;
                 $stop = true;
+
+                if (!$this->stopSma && $this->stopPreventiveSma && $operation['stop_sma'] && $unRealizedProfit < 0) {
+                    $stopPreventive = false;
+                }
+            } else {
+                $fixedProfitOrder = $this->fixedProfitOrder;
             }
 
-            if (($markPrice > $priceGain || $stopPreventive || $stopProtectGain) && $unRealizedProfit > $this->amountGainMin) {
+            if (($markPrice > $priceGain || $stopPreventive || $stopProtectGain || $fixedProfitOrder) && $unRealizedProfit > $this->amountGainMin) {
                 $msg = "Maximum %s [%.4f] - (%.4f > %.4f) | %.4f USDT - %s [%s]\n";
+
+                if ($fixedProfitOrder) {
+                    $msg = "Fixed order %s [%.4f] - (%.4f < %.4f) | %.4f USDT - %s [%s]\n";
+                }
+
                 $this->lossBuy = false;
                 $result = $this->textColor('green', 'gain');
                 $priceClose = $stopProtectGain ? $priceProtect : $priceGain;
                 $force = $stopProtectGain ? false : !$this->closeGainSoft;
 
-                if (!$this->softHedge && !$stopProtectGain) {
+                if (!$this->softHedge && !$stopProtectGain && !$this->useSma) {
                     $positionHedge = $this->getPostionBySide('SHORT');
                     $unRealizedProfitHedge = abs($positionHedge['unRealizedProfit']);
 
@@ -1130,7 +1164,7 @@ final class Monitor
                         $output = $this->textColor('red', "Maximum use of margin in hedge {$positionSide} [{$symbol}]\n");
                         $this->lossSellMaxMargem = true;
 
-                        if ($this->debug) {
+                        if ($this->debug && $this->debugChecks) {
                             echo $output;
                         }
 
@@ -1218,7 +1252,7 @@ final class Monitor
             if ($ordersTotal >= $this->maxOrders) {
                 $output = $this->textColor('blue', "Maximum open orders [{$symbol}]\n");
 
-                if ($this->debug) {
+                if ($this->debug && $this->debugChecks) {
                     echo $output;
                 }
 
@@ -1530,7 +1564,7 @@ final class Monitor
 
         if ($this->useSma) {
             $type_order = $type_sma;
-            $open_order = $type_sma ? true : false;
+            $open_order = $type_sma ? $this->enabledForSmaDistortion($params['price_sma_2'], $params['price_sma_3']) : false;
         }
 
         return [
@@ -1538,6 +1572,31 @@ final class Monitor
             'enable' => $open_order,
             'stop_sma' => $stop_sma
         ];
+    }
+
+    private function enabledForSmaDistortion(float $sma1, float $sma2): bool
+    {
+        if ($this->useSmaDistortion) {
+            $diff = bcsub((string) $sma1, (string) $sma2, 8);
+            $diff = bcdiv($diff, (string) $sma2, 8);
+            $percentage = abs((float) bcmul($diff, '100', 4));
+            $operation = $percentage >= $this->smaDistortionPercent;
+
+            if (!$operation) {
+                $output = $this->textColor(
+                    'cyan',
+                    "[OPERATION] Undistorted SMA - {$percentage} >= {$this->smaDistortionPercent} - [{$this->configs->getSymbol()}]\n"
+                );
+
+                if ($this->debug && $this->debugChecks) {
+                    echo $output;
+                }
+            }
+
+            return $operation;
+        }
+
+        return true;
     }
 
     private function calculateSMA(array $data, int $period): float
@@ -1766,7 +1825,7 @@ final class Monitor
                         "[POSITION] Unfavorable daily gain/variation ratio - {$diffPriceOrder} <= {$realProfit} - [{$this->configs->getSymbol()}]\n"
                     );
 
-                    if ($this->debug) {
+                    if ($this->debug && $this->debugChecks) {
                         echo $output;
                     }
 
@@ -1794,7 +1853,7 @@ final class Monitor
                     "[POSITION] Very close to the last order - [{$this->configs->getSymbol()}]\n"
                 );
 
-                if ($this->debug) {
+                if ($this->debug && $this->debugChecks) {
                     echo $output;
                 }
 
@@ -1826,7 +1885,7 @@ final class Monitor
                     "[POSITION] Maximum use of margin in hedge - [{$this->configs->getSymbol()}]\n"
                 );
 
-                if ($this->debug) {
+                if ($this->debug && $this->debugChecks) {
                     echo $output;
                 }
             }
@@ -1848,7 +1907,7 @@ final class Monitor
                 if ($this->getTotalOpenOrders() >= $this->maxOrdersGeneral) {
                     $output = $this->textColor('cyan', "Maximum open orders [ALL]\n");
 
-                    if ($this->debug) {
+                    if ($this->debug && $this->debugChecks) {
                         echo $output;
                     }
 
@@ -1896,7 +1955,7 @@ final class Monitor
                             "[POSITION] Very close to the last order - [{$this->configs->getSymbol()}]\n"
                         );
 
-                        if ($this->debug) {
+                        if ($this->debug && $this->debugChecks) {
                             echo $output;
                         }
 
@@ -2018,7 +2077,7 @@ final class Monitor
                 "[OPERATION] Unfavorable daily gain/variation ratio - {$diffPrice} <= {$realProfit} - Buy [{$this->configs->getSymbol()}]\n"
             );
 
-            if ($this->debug) {
+            if ($this->debug && $this->debugChecks) {
                 echo $output;
             }
 
@@ -2034,7 +2093,7 @@ final class Monitor
                 "[OPERATION] Unfavorable daily gain/variation ratio - {$diffPrice} <= {$realProfit} - Sell [{$this->configs->getSymbol()}]\n"
             );
 
-            if ($this->debug) {
+            if ($this->debug && $this->debugChecks) {
                 echo $output;
             }
 
@@ -2054,7 +2113,7 @@ final class Monitor
         ) {
             $output = $this->textColor('cyan', "Maximum daily variation [{$this->configs->getSymbol()}]\n");
 
-            if ($this->debug) {
+            if ($this->debug && $this->debugChecks) {
                 echo $output;
             }
 
