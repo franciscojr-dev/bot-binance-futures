@@ -45,6 +45,28 @@ if (empty($runSymbol)) {
         $symbol = $symbols[$i];
         $configs = parse_ini_file($symbol, true, INI_SCANNER_RAW);
 
+        /*
+        $db = new DB(__DIR__ . '/db/bot.db');
+        $db->busyTimeout(5e4);
+
+        $last_execution = $db->querySingle("SELECT execution FROM monitor WHERE symbol = '{$configs['operation']['symbol']}';");
+
+        if ($last_execution) {
+            $date = new Datetime($last_execution);
+            $now = new DateTime('now');
+            $time = $now->diff($date);
+
+            $minutes = ((int) $time->format('%H')) * 60;
+            $minutes += (int) $time->format('%i');
+        } else {
+            $minutes = 60;
+        }
+
+        if ($minutes < 5) {
+            continue;
+        }
+        */
+
         if ($increment > 0 && $increment % 5 === 0) {
             $delayLoop = $delayIncrement;
             $delayIncrement += 0.5;
@@ -78,15 +100,9 @@ foreach ($symbols as $symbol) {
             $monitor = new Monitor(new ConfigMonitor([
                 'symbol' => $configs['operation']['symbol'],
                 'side' => $configs['operation']['side'],
-                'profit' => $configs['operation']['profit'],
                 'leverage' => $configs['operation']['leverage'],
-                'scalper' => $configs['operation']['scalper'],
-                'loss_position' => $configs['operation']['loss_position'],
                 'close_position' => $configs['operation']['close_position'],
                 'order_contracts' => $configs['operation']['order_contracts'],
-                'max_contracts' => $configs['operation']['max_contracts'],
-                'max_orders' => $configs['operation']['max_orders'],
-                'timeout_order' => $configs['operation']['timeout_order'],
             ]), $request, $db);
             $monitor->setDebug(true);
 
