@@ -34,10 +34,13 @@ final class Monitor
     private $closeLossPositionSoft = false;
     private $closeGainSoft = false;
     private $stopPreventive = false;
+    private $closedHedgeLoss = false;
     private $stopSma = false;
     private $stopPreventiveSma = false;
     private $stopPreventiveMarginSma = false;
     private $hedgeSma = false;
+    private $multipleOrderHedge = 1;
+    private $multipleOrderHedgeLimit = 1;
     private $checkMarginSafe = false;
     private $hedgePositionLong = true;
     private $hedgePositionShort = true;
@@ -45,10 +48,12 @@ final class Monitor
     private $scalper = false;
     private $smaScalperDistortion = false;
     private $onlySmaScalper = false;
+    private $multipleOrderScalperSma = 1;
     private $softHedge = false;
     private $safePosition = false;
     private $orderReverse = false;
     private $fixedProfitOrder = false;
+    private $fixedMaxGain = true;
     private $maxOrders = 1;
     private $maxOrdersGeneral = 30;
     private $baseOrderAmount = 5;
@@ -67,6 +72,11 @@ final class Monitor
     private $smaDistortionPercent = 0.10;
     private $smaDistortionMaxPercent = 0.10;
     private $smaDistortionPricePercent = 0.50;
+    private $useRsi = false;
+    private $periodRsi = 9;
+    private $candleRsiLimit = 9;
+    private $rsiValueLong = 70;
+    private $rsiValueShort = 30;
     private $candleConsecutive = 1;
     private $candleClosed = false;
     private $distanceBook = 5;
@@ -74,9 +84,11 @@ final class Monitor
     private $amountPerOrder = 0;
     private $amountGainProtect = 0;
     private $amountAdditionalGainProtect = 0;
+    private $stopFixedOrder = false;
     private $abruptCloseFromAmount = 0;
     private $coveragePointDividerGain = 0;
     private $coverageDividerProtectGain = 2;
+    private $multipleOrderAbruptGain = 2;
     private $marginIndividualMin = 0;
     private $marginIndividualMax = 0;
     private $multiplePercentGain = 0;
@@ -135,10 +147,13 @@ final class Monitor
         $this->closeLossPositionSoft = (bool) ($config['monitor']['close_loss_position_soft'] ?? false);
         $this->closeGainSoft = (bool) ($config['monitor']['close_gain_soft'] ?? false);
         $this->stopPreventive = (bool) ($config['monitor']['stop_preventive'] ?? false);
+        $this->closedHedgeLoss = (bool) ($config['monitor']['closed_hedge_loss'] ?? false);
         $this->stopSma = (bool) ($config['monitor']['stop_sma'] ?? false);
         $this->stopPreventiveSma = (bool) ($config['monitor']['stop_preventive_sma'] ?? false);
         $this->stopPreventiveMarginSma = (bool) ($config['monitor']['stop_preventive_margin_sma'] ?? false);
         $this->hedgeSma = (bool) ($config['monitor']['hedge_sma'] ?? false);
+        $this->multipleOrderHedge = (float) ($config['monitor']['multiple_order_hedge'] ?? 1);
+        $this->multipleOrderHedgeLimit = (float) ($config['monitor']['multiple_order_hedge_limit'] ?? 1);
         $this->checkMarginSafe = (bool) ($config['monitor']['check_margin_safe'] ?? false);
         $this->hedgePositionLong = (bool) ($config['monitor']['hedge_position_long'] ?? false);
         $this->hedgePositionShort = (bool) ($config['monitor']['hedge_position_short'] ?? false);
@@ -146,10 +161,12 @@ final class Monitor
         $this->scalper = (bool) ($config['monitor']['scalper'] ?? false);
         $this->smaScalperDistortion = (bool) ($config['monitor']['sma_scalper_distortion'] ?? false);
         $this->onlySmaScalper = (bool) ($config['monitor']['only_sma_scalper'] ?? false);
+        $this->multipleOrderScalperSma = (int) ($config['monitor']['multiple_order_scalper_sma'] ?? 1);
         $this->softHedge = (bool) ($config['monitor']['soft_hedge'] ?? false);
         $this->safePosition = (bool) ($config['monitor']['safe_position'] ?? false);
         $this->orderReverse = (bool) ($config['monitor']['order_reverse'] ?? false);
         $this->fixedProfitOrder = (bool) ($config['monitor']['fixed_profit_order'] ?? false);
+        $this->fixedMaxGain = (bool) ($config['monitor']['fixed_max_gain'] ?? true);
         $this->maxOrders = (int) ($config['monitor']['max_orders'] ?? 1);
         $this->maxOrdersGeneral = (int) ($config['monitor']['max_orders_general'] ?? 30);
         $this->baseOrderAmount = (float) ($config['monitor']['base_order_amount'] ?? 5);
@@ -168,6 +185,11 @@ final class Monitor
         $this->smaDistortionPercent = (float) ($config['monitor']['sma_distortion_percent'] ?? 0);
         $this->smaDistortionMaxPercent = (float) ($config['monitor']['sma_distortion_max_percent'] ?? 0);
         $this->smaDistortionPricePercent = (float) ($config['monitor']['sma_distortion_price_percent'] ?? 0);
+        $this->useRsi = (bool) ($config['monitor']['use_rsi'] ?? false);;
+        $this->periodRsi = (int) ($config['monitor']['period_rsi'] ?? 9);
+        $this->candleRsiLimit = (int) ($config['monitor']['candle_rsi_limit'] ?? 9);
+        $this->rsiValueLong = (float) ($config['monitor']['rsi_value_long'] ?? 70);;
+        $this->rsiValueShort = (float) ($config['monitor']['rsi_value_short'] ?? 30);;
         $this->candleConsecutive = (int) ($config['monitor']['candle_consecutive'] ?? 1);
         $this->candleClosed = (bool) ($config['monitor']['candle_closed'] ?? false);
         $this->distanceBook = (int) ($config['monitor']['distance_book'] ?? 5);
@@ -175,9 +197,11 @@ final class Monitor
         $this->amountPerOrder = (float) ($config['monitor']['amount_per_order'] ?? 0);
         $this->amountGainProtect = (float) ($config['monitor']['amount_gain_protect'] ?? 0);
         $this->amountAdditionalGainProtect = (float) ($config['monitor']['amount_additional_gain_protect'] ?? 0);
+        $this->stopFixedOrder = (bool) ($config['monitor']['stop_fixed_order'] ?? false);
         $this->abruptCloseFromAmount = (float) ($config['monitor']['abrupt_close_from_amount'] ?? 0);
         $this->coveragePointDividerGain = (float) ($config['monitor']['coverage_point_divider_gain'] ?? 0);
         $this->coverageDividerProtectGain = (float) ($config['monitor']['coverage_divider_protect_gain'] ?? 2);
+        $this->multipleOrderAbruptGain = (float) ($config['monitor']['multiple_order_abrupt_gain'] ?? 2);
         $this->marginIndividualMin = (float) ($config['monitor']['margin_individual_min'] ?? 0);
         $this->marginIndividualMax = (float) ($config['monitor']['margin_individual_max'] ?? 0);
         $this->multiplePercentGain = (float) ($config['monitor']['multiple_percent_gain'] ?? 1);
@@ -316,7 +340,7 @@ final class Monitor
             }
 
             $this->usedMaxMargin = true;
-            $this->operationDisable = true;
+            $this->setOperations(false);
         }
 
         if (abs($pnlHour) >= $this->pnlHour) {
@@ -328,7 +352,7 @@ final class Monitor
                 }
             }
 
-            $this->operationDisable = true;
+            $this->setOperations(false);
         }
 
         if (!$this->position()) {
@@ -337,13 +361,16 @@ final class Monitor
 
         $this->orderAnalyser();
         $infoPrices = $this->infoPrice(false, $this->candleLimit);
+        $enableOperation = [];
 
         foreach ($this->position as $position) {
             if (!empty($infoPrices)) {
-                if ($this->availableOrders($position, $infoPrices['scene'], $infoPrices['prices'])) {
-                    $this->operation($infoPrices['scene'], $infoPrices['prices']);
-                }
+                $enableOperation[] = $this->availableOrders($position, $infoPrices['scene'], $infoPrices['prices']);
             }
+        }
+
+        if (in_array(true, $enableOperation)) {
+            $this->operation($infoPrices['scene'], $infoPrices['prices']);
         }
     }
 
@@ -658,7 +685,7 @@ final class Monitor
         return $percent;
     }
 
-    private function getAmountGainProtect(int $leverage): int
+    private function getAmountGainProtect(int $leverage): float
     {
         $amountGainProtect = $this->amountGainProtect;
 
@@ -746,6 +773,8 @@ final class Monitor
         $closed = true;
         $stop = false;
         $stopProfit = false;
+        $newMarginHedge = $margin * $this->multipleOrderHedge;
+        $marginMaxHedge = $this->marginIndividualMax * $this->multipleOrderHedgeLimit;
 
         if ($operation['type']) {
             $operationSide = $operation['type'] == 'buy' ? 'LONG' : 'SHORT';
@@ -810,7 +839,9 @@ final class Monitor
         if ($side == 'Sell') {
             $priceLoss = (float) bcadd((string) $entryPrice, (string) $diffPriceLoss, 8);
             $priceGain = (float) bcsub((string) $entryPrice, (string) $diffPriceGain, 8);
-            $priceProfit = (float) bcsub((string) $priceGain, (string) $diffPriceGain, 8);
+            $priceProfit = (float) bcsub((string) $markPrice, (string) ($diffPriceGain * $this->multipleOrderAbruptGain), 8);
+            $priceStopFix = (float) bcadd((string) $markPrice, (string) ($diffPriceLoss * $this->multipleOrderAbruptGain), 8);
+
             $priceProtect = 0;
             $msg = '';
             $priceClose = 0;
@@ -827,16 +858,23 @@ final class Monitor
 
             if (
                 (
-                    $markPrice > $priceGain && $unRealizedProfit >= $pnlPositionPercentGainProtect && !$stopPreventive && $unRealizedProfit < $pnlPositionPercentGain
+                    ($this->fixedMaxGain && $markPrice > $priceGain || !$this->fixedMaxGain) && $unRealizedProfit >= $pnlPositionPercentGainProtect && !$stopPreventive && ($this->fixedMaxGain && $unRealizedProfit < $pnlPositionPercentGain || !$this->fixedMaxGain)
                 ) || (
                     $stopPreventive = $this->stopSma && $this->useSma && $this->hasPosition && $operation['enable'] && $operation['stop_sma'] && $operation['type'] === 'buy'
                 ) || (
-                    $this->getAmountGainProtect($leverage) && $unRealizedProfit >= $this->getAmountGainProtect($leverage) && $unRealizedProfit < $pnlPositionPercentGain
+                    $this->getAmountGainProtect($leverage) && $unRealizedProfit >= $this->getAmountGainProtect($leverage) && ($this->fixedMaxGain && $unRealizedProfit < $pnlPositionPercentGain || !$this->fixedMaxGain)
+                ) || (
+                    $this->stopFixedOrder
                 )
             ) {
                 $avgStopGain = bcadd((string) $entryPrice, (string) $markPrice, 8);
                 $avgStopGain = bcdiv((string) $avgStopGain, (string) $this->coverageDividerProtectGain, 8);
                 $priceProtect = $this->formatDecimal((float) $bookPriceBuy, (float) $avgStopGain);
+
+                if ($this->stopFixedOrder) {
+                    $priceProtect = $unRealizedProfit >= $this->getAmountGainProtect($leverage) ? $priceProtect : $priceStopFix;
+                }
+
                 $stopProtectGain = true;
                 $stop = true;
                 $stopProfit = $this->fixedProfitOrder;
@@ -877,7 +915,6 @@ final class Monitor
                     }
                 }
 
-                ///////////
                 $diffPriceClose = $this->calcPercentage($markPrice, $profit);
                 $priceCloseOrder = (float) bcadd((string) $markPrice, (string) $diffPriceClose, 8);
                 $hasPriceOperation = $this->hasPriceOperation('buy', $priceCloseOrder);
@@ -905,7 +942,6 @@ final class Monitor
                         }
                     }
                 }
-                ///////////
             }
 
             $stopPreventiveSma = false;
@@ -931,13 +967,14 @@ final class Monitor
                 $this->lossSell = true;
                 $result = $this->textColor('red', 'loss');
                 $priceClose = $priceLoss;
+                $stopProfit = false;
 
                 if ($this->closeLossPositionSoft && $this->hedgePositionShort && abs($unRealizedProfit) >= $pnlPositionPercentLossHedge) {
                     $stopPreventive = true;
                 }
 
-                if ($stopPreventiveSma) {
-                    $force = true;
+                if ($stopPreventiveSma && !$this->closedHedgeLoss) {
+                    $stopPreventive = true;
                 } else {
                     if ($this->closeLossPosition || ($stopPreventive && $markPrice > $priceLoss && !$this->hedgeSma)) {
                         $force = true;
@@ -974,7 +1011,22 @@ final class Monitor
                                     }
                                 }
                             } else {
-                                $force = true;
+                                $force = !$this->closeGainSoft;
+                                $stop = false;
+                                $lastOrderFilled = $this->getLastOrderFilled('buy', true);
+
+                                if (!$lastOrderFilled || !$this->isTimeBoxOrder($lastOrderFilled, false, true)) {
+                                    $output = $this->textColor(
+                                        'red',
+                                        "[OPERATION] Very close to the last order - [{$this->configs->getSymbol()}]\n"
+                                    );
+
+                                    if ($this->debug && $this->debugChecks) {
+                                        echo $output;
+                                    }
+
+                                    $priceClose = 0;
+                                }
                             }
 
                             if ($positionAmtHedge && $priceClose) {
@@ -1001,6 +1053,10 @@ final class Monitor
 
                             if ($position['positionAmt'] > $positionAmtOrigin) {
                                 $priceClose = 0;
+                            }
+
+                            if ($this->multipleOrderHedge > 1) {
+                                $position['positionAmt'] *= $this->multipleOrderHedge;
                             }
                         } else {
                             if (!$this->useSma) {
@@ -1085,6 +1141,30 @@ final class Monitor
                     $this->closePosition($paramsClose);
                 }
 
+                if ($this->lossSell && $this->closedHedgeLoss) {
+                    $paramsClose = [
+                        'type' => 'buy',
+                        'quantity' => $position['positionAmt'],
+                        'price' => $stop ? $priceClose : $bookPriceBuy,
+                        'force' => true,
+                        'closed' => true,
+                        'stop' => $stop,
+                        'stop_profit' => false,
+                        'abrupt_close' => $abruptClose
+                    ];
+                    $this->closePosition($paramsClose);
+                }
+
+                if ($newMarginHedge >= $marginMaxHedge && !$stopProfit) {
+                    $output = $this->textColor('red', "[OPERATION] Maximum margin used {$positionSide} [{$symbol}]\n");
+
+                    if ($this->debug && $this->debugChecks) {
+                        echo $output;
+                    }
+
+                    return false;
+                }
+
                 $paramsClose = [
                     'type' => 'buy',
                     'quantity' => $position['positionAmt'],
@@ -1104,7 +1184,9 @@ final class Monitor
         if ($side == 'Buy') {
             $priceLoss = (float) bcsub((string) $entryPrice, (string) $diffPriceLoss, 8);
             $priceGain = (float) bcadd((string) $entryPrice, (string) $diffPriceGain, 8);
-            $priceProfit = (float) bcadd((string) $priceGain, (string) $diffPriceGain, 8);
+            $priceProfit = (float) bcadd((string) $markPrice, (string) ($diffPriceGain * $this->multipleOrderAbruptGain), 8);
+            $priceStopFix = (float) bcsub((string) $markPrice, (string) ($diffPriceLoss * $this->multipleOrderAbruptGain), 8);
+
             $priceProtect = 0;
             $msg = '';
             $result = '';
@@ -1121,16 +1203,23 @@ final class Monitor
 
             if (
                 (
-                    $markPrice < $priceGain && $unRealizedProfit >= $pnlPositionPercentGainProtect && !$stopPreventive && $unRealizedProfit < $pnlPositionPercentGain
+                    ($this->fixedMaxGain && $markPrice < $priceGain || !$this->fixedMaxGain) && $unRealizedProfit >= $pnlPositionPercentGainProtect && !$stopPreventive && ($this->fixedMaxGain && $unRealizedProfit < $pnlPositionPercentGain || !$this->fixedMaxGain)
                 ) || (
                     $stopPreventive = $this->stopSma && $this->useSma && $this->hasPosition && $operation['enable'] && $operation['stop_sma'] && $operation['type'] === 'sell'
                 ) || (
-                    $this->getAmountGainProtect($leverage) && $unRealizedProfit >= $this->getAmountGainProtect($leverage) && $unRealizedProfit < $pnlPositionPercentGain
+                    $this->getAmountGainProtect($leverage) && $unRealizedProfit >= $this->getAmountGainProtect($leverage) && ($this->fixedMaxGain && $unRealizedProfit < $pnlPositionPercentGain || !$this->fixedMaxGain)
+                ) || (
+                    $this->stopFixedOrder
                 )
             ) {
                 $avgStopGain = bcadd((string) $entryPrice, (string) $markPrice, 8);
                 $avgStopGain = bcdiv((string) $avgStopGain, (string) $this->coverageDividerProtectGain, 8);
                 $priceProtect = $this->formatDecimal((float) $bookPriceSell, (float) $avgStopGain);
+
+                if ($this->stopFixedOrder) {
+                    $priceProtect = $unRealizedProfit >= $this->getAmountGainProtect($leverage) ? $priceProtect : $priceStopFix;
+                }
+
                 $stopProtectGain = true;
                 $stop = true;
                 $stopProfit = $this->fixedProfitOrder;
@@ -1171,7 +1260,6 @@ final class Monitor
                     }
                 }
 
-                ///////////
                 $diffPriceClose = $this->calcPercentage($markPrice, $profit);
                 $priceCloseOrder = (float) bcsub((string) $markPrice, (string) $diffPriceClose, 8);
                 $hasPriceOperation = $this->hasPriceOperation('sell', $priceCloseOrder);
@@ -1199,7 +1287,6 @@ final class Monitor
                         }
                     }
                 }
-                ///////////
             }
 
             $stopPreventiveSma = false;
@@ -1225,12 +1312,13 @@ final class Monitor
                 $this->lossBuy = true;
                 $result = $this->textColor('red', 'loss');
                 $priceClose = $priceLoss;
+                $stopProfit = false;
 
                 if ($this->closeLossPositionSoft && $this->hedgePositionLong && abs($unRealizedProfit) >= $pnlPositionPercentLossHedge) {
                     $stopPreventive = true;
                 }
 
-                if ($stopPreventiveSma) {
+                if ($stopPreventiveSma && !$this->closedHedgeLoss) {
                     $stopPreventive = true;
                 } else {
                     if ($this->closeLossPosition || ($stopPreventive && $markPrice < $priceLoss && !$this->hedgeSma)) {
@@ -1268,7 +1356,22 @@ final class Monitor
                                     }
                                 }
                             } else {
-                                $force = true;
+                                $force = !$this->closeGainSoft;
+                                $stop = false;
+                                $lastOrderFilled = $this->getLastOrderFilled('sell', true);
+
+                                if (!$lastOrderFilled || !$this->isTimeBoxOrder($lastOrderFilled, false, true)) {
+                                    $output = $this->textColor(
+                                        'red',
+                                        "[OPERATION] Very close to the last order - [{$this->configs->getSymbol()}]\n"
+                                    );
+
+                                    if ($this->debug && $this->debugChecks) {
+                                        echo $output;
+                                    }
+
+                                    $priceClose = 0;
+                                }
                             }
 
                             if ($positionAmtHedge && $priceClose) {
@@ -1295,6 +1398,10 @@ final class Monitor
 
                             if ($position['positionAmt'] > $positionAmtOrigin) {
                                 $priceClose = 0;
+                            }
+
+                            if ($this->multipleOrderHedge > 1) {
+                                $position['positionAmt'] *= $this->multipleOrderHedge;
                             }
                         } else {
                             if (!$this->useSma) {
@@ -1378,6 +1485,30 @@ final class Monitor
                         'abrupt_close' => false
                     ];
                     $this->closePosition($paramsClose);
+                }
+
+                if ($this->lossBuy && $this->closedHedgeLoss) {
+                    $paramsClose = [
+                        'type' => 'sell',
+                        'quantity' => $position['positionAmt'],
+                        'price' => $stop ? $priceClose : $bookPriceSell,
+                        'force' => true,
+                        'closed' => true,
+                        'stop' => $stop,
+                        'stop_profit' => false,
+                        'abrupt_close' => $abruptClose
+                    ];
+                    $this->closePosition($paramsClose);
+                }
+
+                if ($newMarginHedge >= $marginMaxHedge && !$stopProfit) {
+                    $output = $this->textColor('red', "[OPERATION] Maximum margin used {$positionSide} [{$symbol}]\n");
+
+                    if ($this->debug && $this->debugChecks) {
+                        echo $output;
+                    }
+
+                    return false;
                 }
 
                 $paramsClose = [
@@ -1484,10 +1615,18 @@ final class Monitor
                             return;
                         }
 
-                        if ($order['type'] == $type) {
-                            $result = $this->cancelOrder($order['orderId'] ?? '');
+                        $newStopPrice = $params['stop_profit'] ? $params['price_profit'] : $params['price'];
+                        $validPrice = ($order['side'] == 'BUY' && $newStopPrice < $order['stopPrice'])
+                            || ($order['side'] == 'SELL' && $newStopPrice > $order['stopPrice']);
 
-                            if (($result['order_cancel']['status'] ?? 0) !== 200) {
+                        if ($order['type'] == $type) {
+                            if ($validPrice) {
+                                $result = $this->cancelOrder($order['orderId'] ?? '');
+
+                                if (($result['order_cancel']['status'] ?? 0) !== 200) {
+                                    $breakOrder = true;
+                                }
+                            } else {
                                 $breakOrder = true;
                             }
                         }
@@ -1500,27 +1639,27 @@ final class Monitor
                             $params,
                             $params['closed'] ?? true,
                             $params['stop'] ?? true,
-                            $params['stop_profit'] ?? false,
+                            $params['stop_profit'] ?? false
                         );
                     }
 
                     if (($params['stop_profit'] ?? false)) {
                         $typeOrder = ($params['stop'] ?? true) ? 'TAKE' : 'LIMIT';
-                        $output = $this->textColor('red', "Order to close position [{$typeOrder}]\n");
+                        $output = $this->textColor('red', "Order to close position [{$typeOrder}] - {$this->configs->getSymbol()}\n");
                     } else {
                         $typeOrder = ($params['stop'] ?? true) ? 'STOP' : 'LIMIT';
-                        $output = $this->textColor('red', "Order to close position [{$typeOrder}]\n");
+                        $output = $this->textColor('red', "Order to close position [{$typeOrder}] - {$this->configs->getSymbol()}\n");
                     }
 
                     if ($params['abrupt_close']) {
-                        $output = $this->textColor('red', "Close position [MARKET]\n");
+                        $output = $this->textColor('red', "Close position [MARKET] - {$this->configs->getSymbol()}\n");
                     }
 
                     if ($this->debug) {
                         echo $output;
                     }
                 } else {
-                    $output = $this->textColor('red', "Failed to create position close order\n");
+                    $output = $this->textColor('yellow', "Not create position close order - {$this->configs->getSymbol()}\n");
 
                     if ($this->debug) {
                         echo $output;
@@ -1685,6 +1824,7 @@ final class Monitor
         $priceSma2 = $this->calculateSMA($listPrices, $this->periodSma2);
         $priceSma3 = $this->calculateSMA($listPrices, $this->periodSma3);
         $priceSma4 = $this->calculateSMA($listPrices, $this->periodSma4);
+        $rsi = $this->calculateRSI(array_slice($listPrices, $this->candleRsiLimit * -1, $this->candleRsiLimit), $this->periodRsi);
 
         $key = Position::arrayKeyLast($candles);
 
@@ -1706,6 +1846,7 @@ final class Monitor
             'price_sma_2' => $priceSma2,
             'price_sma_3' => $priceSma3,
             'price_sma_4' => $priceSma4,
+            'rsi' => $rsi
         ], $btc);
     }
 
@@ -1773,6 +1914,16 @@ final class Monitor
             }
         }
 
+        $type_rsi = '';
+
+        if ($params['rsi'] >= $this->rsiValueShort) {
+            $type_rsi = 'sell';
+        }
+
+        if ($params['rsi'] <= $this->rsiValueLong) {
+            $type_rsi = 'buy';
+        }
+
         if ($open_order && !$this->useSma) {
             if ($type_sma && $type_sma !== $type_order) {
                 $open_order = false;
@@ -1805,6 +1956,25 @@ final class Monitor
             $open_order = $type_sma ? $distortionNormal && !$distortionMax && !$distortionPriceSma : false;
             $enableScalper = $this->smaScalperDistortion ? $distortionPriceSma : false;
             $typeScalper = $type_sma ? ($type_sma == 'sell' ? 'buy' : 'sell') : '';
+        }
+
+        if ($this->useRsi) {
+            if (!$this->useSma) {
+                $type_order = $type_rsi;
+            } else {
+                $type_order = $type_rsi == $type_sma ? $type_sma : '';
+            }
+
+            $open_order = $type_order != '';
+
+            $output = $this->textColor(
+                'cyan',
+                "[OPERATION] Value RSI - {$params['rsi']} {$type_rsi} - [{$this->configs->getSymbol()}]\n"
+            );
+
+            if ($this->debug && $this->debugChecks) {
+                echo $output;
+            }
         }
 
         if ($this->smaScalperDistortion && $this->onlySmaScalper) {
@@ -1860,6 +2030,35 @@ final class Monitor
         $sma = $sum / $period;
 
         return (float) $sma;
+    }
+
+    private function calculateRSI(array $data, int $period): float
+    {
+        $delta = [];
+        $gain = [];
+        $loss = [];
+
+        for ($i = 1; $i < count($data); $i++) {
+            $delta[] = $data[$i] - $data[$i - 1];
+        }
+
+        for ($i = 0; $i < count($delta); $i++) {
+            if ($delta[$i] > 0) {
+                $gain[] = $delta[$i];
+                $loss[] = 0;
+            } else {
+                $gain[] = 0;
+                $loss[] = abs($delta[$i]);
+            }
+        }
+
+        $avgGain = array_sum(array_slice($gain, 0, $period)) / $period;
+        $avgLoss = array_sum(array_slice($loss, 0, $period)) / $period;
+
+        $rs = $avgGain / $avgLoss;
+        $rsi = 100 - (100 / (1 + $rs));
+
+        return $rsi;
     }
 
     private function getBook(): array
@@ -1963,7 +2162,7 @@ final class Monitor
         return (float) $value;
     }
 
-    private function getOrderContracts(float $price): float
+    private function getOrderContracts(float $price, bool $scalperSma = false): float
     {
         $default = $this->configs->getOrderContracts();
         $contracts = bcdiv("{$this->baseOrderAmount}", (string) $price, 4);
@@ -1984,7 +2183,9 @@ final class Monitor
             }
         }
 
-        return $contracts * $this->multipleOrder;
+        $multiple = !$scalperSma ? $this->multipleOrder : $this->multipleOrderScalperSma;
+
+        return $contracts * $multiple;
     }
 
     private function getPriceBook(): ?array
@@ -2011,8 +2212,9 @@ final class Monitor
     private function operation(array $operation, array $prices): void
     {
         $hedgePartial = $this->softHedge && ($this->lossBuy || $this->lossSell);
+        $scalperSma = false;
 
-        if ($this->smaScalperDistortion && $operation['type_scalper'] && $operation['enable_scalper']) {
+        if ($this->smaScalperDistortion && $operation['type_scalper'] && $operation['enable_scalper'] && $this->operations) {
             $output = $this->textColor(
                 'magenta',
                 "[OPERATION] Scalper distortion {$operation['type']} -> {$operation['type_scalper']} - [{$this->configs->getSymbol()}]\n"
@@ -2020,6 +2222,7 @@ final class Monitor
 
             $operation['type'] = $operation['type_scalper'];
             $operation['enable'] = $operation['enable_scalper'];
+            $scalperSma = true;
 
             if ($this->debug && $this->debugChecks) {
                 echo $output;
@@ -2055,13 +2258,13 @@ final class Monitor
                 return;
             }
 
-            $pricesOperation = $this->getPricesForOperation($operation['type'], $priceBook, $prices);
+            $pricesOperation = $this->getPricesForOperation($operation['type'], $priceBook, $prices, $scalperSma);
 
             if (!$this->hasPriceOperation(
                 $pricesOperation['origin']['param']['type'],
                 $pricesOperation['origin']['price'],
                 true
-            )) {
+            ) && !$scalperSma) {
                 return;
             }
 
@@ -2082,7 +2285,7 @@ final class Monitor
                 $diffPriceOrder = abs(Position::percentage($pricesOperation['origin']['price'], $priceCheckCandle));
                 $realProfit = $this->getPnlPercentBalanced($this->configs->getLeverage(), $profit) * $this->multiplePercentGain;
 
-                if ($diffPriceOrder <= $realProfit) {
+                if ($diffPriceOrder <= $realProfit && !$scalperSma) {
                     $output = $this->textColor(
                         'cyan',
                         "[POSITION] Unfavorable daily gain/variation ratio - {$diffPriceOrder} <= {$realProfit} - [{$this->configs->getSymbol()}]\n"
@@ -2154,6 +2357,21 @@ final class Monitor
             }
 
             if ($this->operations || $hedgePartial) {
+                if ($pricesOperation['origin']['param']['type'] == 'sell' && $this->lossSell && !$this->lossSellMaxMargem
+                    || $pricesOperation['origin']['param']['type'] == 'buy' && $this->lossBuy && !$this->lossBuyMaxMargem
+                ) {
+                    $quantityNew = $pricesOperation['origin']['param']['quantity'] * ($scalperSma ? 1 : $this->multipleOrderScalperSma);
+
+                    $output = $this->textColor('red', "[OPERATION] Loss defender {$pricesOperation['origin']['param']['quantity']} -> {$quantityNew} [{$this->configs->getSymbol()}]\n");
+
+                    if ($this->debug && $this->debugChecks) {
+                        echo $output;
+                    }
+
+                    $pricesOperation['origin']['param']['quantity'] = $quantityNew;
+                }
+
+
                 $colorSide = $pricesOperation['origin']['param']['type'] == 'buy' ? 'green' : 'red';
                 $output = sprintf(
                     "Symbol: %s - Side: %s - Open: %s - Quantity: %s\n",
@@ -2253,10 +2471,10 @@ final class Monitor
         }
     }
 
-    private function getLastOrderFilled(string $side): ?int
+    private function getLastOrderFilled(string $side, bool $reduceOnly = false): ?int
     {
         $startTime = new DateTime('now');
-        $startTime->sub(new DateInterval('PT5M'));
+        $startTime->sub(new DateInterval('PT10M'));
 
         $request = [
             'symbol' => $this->configs->getSymbol(),
@@ -2270,8 +2488,8 @@ final class Monitor
             return null;
         }
 
-        $result = array_filter($result['response'], function ($v, $k) use ($side) {
-            return $v['status'] !== 'CANCELED' && $v['side'] === strtoupper($side);
+        $result = array_filter($result['response'], function ($v, $k) use ($side, $reduceOnly) {
+            return $v['status'] !== 'CANCELED' && $v['side'] === strtoupper($side) && (bool) ($v['reduceOnly']) == $reduceOnly;
         }, \ARRAY_FILTER_USE_BOTH);
         $result = array_reverse($result);
 
@@ -2282,7 +2500,7 @@ final class Monitor
         return (int) $result[0]['updateTime'];
     }
 
-    private function getPricesForOperation(string $type, array $priceBook, array $prices): array
+    private function getPricesForOperation(string $type, array $priceBook, array $prices, bool $scalperSma = false): array
     {
         $typeReverse = $type == 'buy' ? 'sell' : 'buy';
         $paramOrderOrigin = $this->paramsOfOrder([
@@ -2295,7 +2513,7 @@ final class Monitor
                 'book' => $priceBook['buy'],
                 'candle' => $prices['price_buy']
             ],
-        ]);
+        ], $scalperSma);
         $priceOrderOrigin = Position::calculePriceOrder(
             $paramOrderOrigin['type'],
             $paramOrderOrigin['price'],
@@ -2313,7 +2531,7 @@ final class Monitor
                 'book' => $priceBook['buy'],
                 'candle' => $prices['price_buy']
             ],
-        ]);
+        ], $scalperSma);
         $priceOrderReverse = Position::calculePriceOrder(
             $paramOrderReverse['type'],
             $paramOrderReverse['price'],
@@ -2433,7 +2651,7 @@ final class Monitor
         return !in_array($status, [200, 400]);
     }
 
-    private function paramsOfOrder(array $param): array
+    private function paramsOfOrder(array $param, bool $scalperSma = false): array
     {
         if ($param['type'] == 'sell') {
             $price = $param['sell']['candle'];
@@ -2455,7 +2673,7 @@ final class Monitor
 
         return [
             'type' => $param['type'],
-            'quantity' => $this->getOrderContracts($price),
+            'quantity' => $this->getOrderContracts($price, $scalperSma),
             'price' => $price
         ];
     }
@@ -2699,6 +2917,7 @@ final class Monitor
     public function setOperations(bool $operations): void
     {
         $this->operations = $operations;
+        $this->setOperationDisable(!$operations);
     }
 
     public function setOperationDisable(bool $operationDisable): void
