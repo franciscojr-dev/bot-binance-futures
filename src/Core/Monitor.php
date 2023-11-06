@@ -85,6 +85,7 @@ final class Monitor
     private $amountGainProtect = 0;
     private $amountAdditionalGainProtect = 0;
     private $stopFixedOrder = false;
+    private $stopGainProtectFixedOrder = false;
     private $abruptCloseFromAmount = 0;
     private $coveragePointDividerGain = 0;
     private $coverageDividerProtectGain = 2;
@@ -198,6 +199,7 @@ final class Monitor
         $this->amountGainProtect = (float) ($config['monitor']['amount_gain_protect'] ?? 0);
         $this->amountAdditionalGainProtect = (float) ($config['monitor']['amount_additional_gain_protect'] ?? 0);
         $this->stopFixedOrder = (bool) ($config['monitor']['stop_fixed_order'] ?? false);
+        $this->stopGainProtectFixedOrder = (bool) ($config['monitor']['stop_gain_protect_fixed_order'] ?? false);
         $this->abruptCloseFromAmount = (float) ($config['monitor']['abrupt_close_from_amount'] ?? 0);
         $this->coveragePointDividerGain = (float) ($config['monitor']['coverage_point_divider_gain'] ?? 0);
         $this->coverageDividerProtectGain = (float) ($config['monitor']['coverage_divider_protect_gain'] ?? 2);
@@ -872,7 +874,10 @@ final class Monitor
                 $priceProtect = $this->formatDecimal((float) $bookPriceBuy, (float) $avgStopGain);
 
                 if ($this->stopFixedOrder) {
-                    $priceProtect = $unRealizedProfit >= $this->getAmountGainProtect($leverage) ? $priceProtect : $priceStopFix;
+                    $priceProtect = $this->stopGainProtectFixedOrder && $unRealizedProfit >= $this->getAmountGainProtect($leverage)
+                        ? $priceProtect
+                        : $priceStopFix;
+                    $stopPreventive = true;
                 }
 
                 $stopProtectGain = true;
@@ -944,6 +949,10 @@ final class Monitor
                 }
             }
 
+            if ($unRealizedProfit < 0 && $this->getAmountGainProtect($leverage) && abs($unRealizedProfit) >= $this->getAmountGainProtect($leverage)) {
+                $this->lossSell = true;
+            }
+
             $stopPreventiveSma = false;
 
             if ($this->stopPreventiveMarginSma && $unRealizedProfit < 0
@@ -957,7 +966,7 @@ final class Monitor
                 $stopPreventive = false;
             }
 
-            if (($markPrice > $priceLoss || $stopPreventive || $stopPreventiveSma) && $unRealizedProfit < 0) {
+            if (($markPrice > $priceLoss || $stopPreventive || $stopProtectGain || $stopPreventiveSma) && $unRealizedProfit < 0) {
                 $msg = "Maximum %s [%.4f] - (%.4f > %.4f) | %.4f USDT - %s [%s]\n";
 
                 if ($stopPreventiveSma) {
@@ -966,7 +975,7 @@ final class Monitor
 
                 $this->lossSell = true;
                 $result = $this->textColor('red', 'loss');
-                $priceClose = $priceLoss;
+                $priceClose = $stopProtectGain ? $priceProtect : $priceLoss;
                 $stopProfit = false;
 
                 if ($this->closeLossPositionSoft && $this->hedgePositionShort && abs($unRealizedProfit) >= $pnlPositionPercentLossHedge) {
@@ -1015,7 +1024,7 @@ final class Monitor
                                 $stop = false;
                                 $lastOrderFilled = $this->getLastOrderFilled('buy', true);
 
-                                if (!$lastOrderFilled || !$this->isTimeBoxOrder($lastOrderFilled, false, true)) {
+                                if ($lastOrderFilled && !$this->isTimeBoxOrder($lastOrderFilled, false, true)) {
                                     $output = $this->textColor(
                                         'red',
                                         "[OPERATION] Very close to the last order - [{$this->configs->getSymbol()}]\n"
@@ -1217,7 +1226,10 @@ final class Monitor
                 $priceProtect = $this->formatDecimal((float) $bookPriceSell, (float) $avgStopGain);
 
                 if ($this->stopFixedOrder) {
-                    $priceProtect = $unRealizedProfit >= $this->getAmountGainProtect($leverage) ? $priceProtect : $priceStopFix;
+                    $priceProtect = $this->stopGainProtectFixedOrder && $unRealizedProfit >= $this->getAmountGainProtect($leverage)
+                        ? $priceProtect
+                        : $priceStopFix;
+                    $stopPreventive = true;
                 }
 
                 $stopProtectGain = true;
@@ -1289,6 +1301,10 @@ final class Monitor
                 }
             }
 
+            if ($unRealizedProfit < 0 && $this->getAmountGainProtect($leverage) && abs($unRealizedProfit) >= $this->getAmountGainProtect($leverage)) {
+                $this->lossBuy = true;
+            }
+
             $stopPreventiveSma = false;
 
             if ($this->stopPreventiveMarginSma && $unRealizedProfit < 0
@@ -1302,7 +1318,7 @@ final class Monitor
                 $stopPreventive = false;
             }
 
-            if (($markPrice < $priceLoss || $stopPreventive || $stopPreventiveSma) && $unRealizedProfit < 0) {
+            if (($markPrice < $priceLoss || $stopPreventive || $stopProtectGain || $stopPreventiveSma) && $unRealizedProfit < 0) {
                 $msg = "Maximum %s [%.4f] - (%.4f < %.4f) | %.4f USDT - %s [%s]\n";
 
                 if ($stopPreventiveSma) {
@@ -1311,7 +1327,7 @@ final class Monitor
 
                 $this->lossBuy = true;
                 $result = $this->textColor('red', 'loss');
-                $priceClose = $priceLoss;
+                $priceClose = $stopProtectGain ? $priceProtect : $priceLoss;
                 $stopProfit = false;
 
                 if ($this->closeLossPositionSoft && $this->hedgePositionLong && abs($unRealizedProfit) >= $pnlPositionPercentLossHedge) {
@@ -1360,7 +1376,7 @@ final class Monitor
                                 $stop = false;
                                 $lastOrderFilled = $this->getLastOrderFilled('sell', true);
 
-                                if (!$lastOrderFilled || !$this->isTimeBoxOrder($lastOrderFilled, false, true)) {
+                                if ($lastOrderFilled && !$this->isTimeBoxOrder($lastOrderFilled, false, true)) {
                                     $output = $this->textColor(
                                         'red',
                                         "[OPERATION] Very close to the last order - [{$this->configs->getSymbol()}]\n"
